@@ -32,7 +32,7 @@ Separately, productized workflows want to intercept the action server-side witho
 
 ```js
 mcp.registerResource(
-    'mikser-preview-ui-shell',
+    'mikser-app-shell',
     'ui://mikser/app-shell',
     { mimeType: 'text/html;profile=mcp-app', ... },
     async (uri) => ({
@@ -73,7 +73,7 @@ This is the spec-mandated signal that this tool renders UI. Hosts that implement
     ],
     "structuredContent": {
         "entityId": "/blog/launch.md",
-        "layoutId": "/layouts/mcp-ui/post-approval.hbs",
+        "layoutId": "/layouts/apps/post-approval.hbs",
         "mode": "approval",
         "html": "<rendered fragment>",
         "mcpApp": { "actions": [...], "sandbox": [...], "actionTool": "mikser_app_action" }
@@ -143,12 +143,12 @@ POST https://app.example.com/mikser-actions
 Content-Type: application/json
 X-Mikser-Signature: sha256=...
 X-Mikser-Request-Id: <opaque uuid for idempotency>
-X-Mikser-Layout-Id: /layouts/mcp-ui/post-approval.hbs
+X-Mikser-Layout-Id: /layouts/apps/post-approval.hbs
 X-Mikser-Mode: approval
 
 {
     "entityId": "/documents/blog/launch.md",
-    "layoutId": "/layouts/mcp-ui/post-approval.hbs",
+    "layoutId": "/layouts/apps/post-approval.hbs",
     "action":   "approve",
     "payload":  {},
     "mode":     "approval",
