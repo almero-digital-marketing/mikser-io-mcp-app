@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import nodePath from 'node:path'
 
 import { mcpApp } from '../../index.js'
 import { createHarness } from 'mikser-io/testing/harness.js'
@@ -709,5 +712,83 @@ describe('mcpApp: its own route', () => {
         assert.ok(!mcp.registered.has('mikser_app_preview')
             || mcp.registered.get('mikser_app_preview').endpoints.length === 1,
             'if it registered at all, the registration still carries its scope')
+    })
+})
+
+// Identity. This route serves a site's apps to that site's visitors, so
+// mikser's name and mark on it would brand someone else's form with the engine
+// that renders it.
+describe('mcpApp: the route carries the site\'s identity, not mikser\'s', () => {
+    function withSite({ url, files = [], appOptions = {} } = {}) {
+        resetServices()
+        const outputFolder = mkdtempSync(nodePath.join(tmpdir(), 'mcp-app-out-'))
+        for (const file of files) writeFileSync(nodePath.join(outputFolder, file), 'x')
+        const mcp = fakeMcp()
+        const h = createHarness({ options: { port: 3001, url, outputFolder, workingFolder: '/srv/premium' } })
+        provideService('mcp', mcp)
+        mcpApp(appOptions)(h.core)
+        return { h, mcp }
+    }
+
+    it('never inherits mikser\'s icons — an iconless site gets none', async () => {
+        const { h, mcp } = withSite({ url: 'https://gpointpremium.com' })
+        await h.runHook('loaded')
+        const { serverInfo } = mcp.mounted[0]
+        assert.deepEqual(serverInfo.icons, [], 'no icon beats someone else\'s mark')
+        assert.ok(!JSON.stringify(serverInfo).toLowerCase().includes('mikser-mark'))
+        assert.equal(serverInfo.title, 'gpointpremium.com')
+        assert.equal(serverInfo.name, 'gpointpremium.com-apps')
+        assert.equal(serverInfo.websiteUrl, 'https://gpointpremium.com')
+    })
+
+    it('advertises the address the engine already serves, when the build emitted an icon', async () => {
+        // /favicon.ico is the engine's own answer: the site's icon when the
+        // output has one, mikser's mark otherwise. Reused rather than a new
+        // convention of icon file names.
+        const { h, mcp } = withSite({ url: 'https://gpointpremium.com', files: ['favicon.ico'] })
+        await h.runHook('loaded')
+        assert.deepEqual(mcp.mounted[0].serverInfo.icons, [
+            { src: 'https://gpointpremium.com/favicon.ico', mimeType: 'image/x-icon', sizes: ['any'] },
+        ])
+    })
+
+    it('says no icon when the output has none, rather than letting the engine fallback brand it', async () => {
+        // That address would still answer — with mikser's mark. Advertising it
+        // is exactly how someone else's form ends up wearing mikser's icon.
+        const { h, mcp } = withSite({ url: 'https://gpointpremium.com', files: ['favicon.svg'] })
+        await h.runHook('loaded')
+        assert.deepEqual(mcp.mounted[0].serverInfo.icons, [])
+    })
+
+    it('ignores a favicon that the site declares but never emitted', async () => {
+        // Probed in the output folder on purpose: a <link rel=icon> pointing at
+        // a file no build produced is not an icon, and advertising it gives a
+        // host a broken image instead of none.
+        const { h, mcp } = withSite({ url: 'https://gpointpremium.com', files: ['index.html'] })
+        await h.runHook('loaded')
+        assert.deepEqual(mcp.mounted[0].serverInfo.icons, [])
+    })
+
+    it('takes an explicit title, name and icons', async () => {
+        const icons = [{ src: 'https://cdn.example/logo.png', mimeType: 'image/png', sizes: ['64x64'] }]
+        const { h, mcp } = withSite({
+            url: 'https://gpointpremium.com',
+            files: ['favicon.svg'],
+            appOptions: { title: 'G Point Premium', serverName: 'gpoint-premium', icons },
+        })
+        await h.runHook('loaded')
+        const { serverInfo } = mcp.mounted[0]
+        assert.equal(serverInfo.title, 'G Point Premium')
+        assert.equal(serverInfo.name, 'gpoint-premium')
+        assert.deepEqual(serverInfo.icons, icons, 'an explicit list replaces the probe')
+    })
+
+    it('falls back to the working folder when the site has no public url', async () => {
+        const { h, mcp } = withSite({})
+        await h.runHook('loaded')
+        const { serverInfo } = mcp.mounted[0]
+        assert.equal(serverInfo.title, 'premium')
+        assert.equal(serverInfo.name, 'premium-apps')
+        assert.deepEqual(serverInfo.icons, [], 'no url means no absolute icon to advertise')
     })
 })

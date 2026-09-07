@@ -43,7 +43,7 @@
 // which is why this package needs ^11.1.0 of it and why registering here is
 // enough to switch it on.
 import path from 'node:path'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createHmac, randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -121,6 +121,44 @@ export async function forwardToHandler(handler, body) {
     return { ok: true, handlerResponse: await res.text() }
 }
 
+// Who a client thinks it is talking to on this route.
+//
+// NOT mikser. This endpoint serves a site's apps to that site's visitors, so
+// mikser's name and mark on it would brand someone else's form with the engine
+// that happens to render it.
+//
+// The icon reuses what the engine already does rather than inventing a
+// convention: mikser's server answers `/favicon.ico` with the site's own icon
+// when the build emitted one, and with mikser's mark only as a fallback (the
+// static output handler wins over that route — checked, not assumed). So the
+// address is the site's answer to "what is this site's icon", and it is
+// advertised only when the output actually holds one. When it does not, the
+// answer is NO icon: that fallback is mikser's mark, and inheriting it here is
+// the thing this exists to avoid.
+const SITE_ICON = 'favicon.ico'
+
+function siteIdentity({ runtime, title, icons, name }) {
+    const url = runtime.options.url ?? null
+    const host = url ? (() => { try { return new URL(url).host } catch { return null } })() : null
+    const folder = path.basename(runtime.options.workingFolder ?? '') || null
+
+    let own = []
+    if (icons === undefined && url && runtime.options.outputFolder
+        && existsSync(path.join(runtime.options.outputFolder, SITE_ICON))) {
+        own = [{ src: `${url.replace(/\/$/, '')}/${SITE_ICON}`, mimeType: 'image/x-icon', sizes: ['any'] }]
+    }
+
+    return {
+        // The programmatic identifier a host keys its config on: per site, so
+        // two mikser sites in one client are two servers rather than one
+        // shadowing the other.
+        name: name ?? `${host ?? folder ?? 'mikser'}-apps`,
+        title: title ?? host ?? folder ?? 'Apps',
+        icons: icons ?? own,
+        websiteUrl: url ?? undefined,
+    }
+}
+
 export function mcpApp(options = {}) {
     // `name` is the endpoint's name AND what the registrations below scope
     // themselves to, so the two cannot drift apart. `path` defaults to
@@ -140,6 +178,10 @@ export function mcpApp(options = {}) {
         tools     = [PREVIEW_TOOL, ACTION_TOOL],
         resources = [APP_SHELL_URI, MODES_URI],
         prompts   = [],
+        // Identity shown for this route. Defaults come from the site — see
+        // siteIdentity above; `icons: []` is how you say "no icon" and is
+        // also what an iconless site gets.
+        title, icons, serverName,
     } = options
 
     return (core) => {
@@ -429,9 +471,10 @@ export function mcpApp(options = {}) {
                 logger.error('mcpApp: mikser-io-mcp is too old — needs >= 11.2.0 for endpoint scoping and mountEndpoint. Not mounting %s.', routePath)
                 return
             }
+            const serverInfo = siteIdentity({ runtime, title, icons, name: serverName })
             const mounted = mcp.mountEndpoint({
                 name, path: routePath, auth, token, allowRemote,
-                tools, resources, prompts,
+                tools, resources, prompts, serverInfo,
             })
             logger.info('MCP Apps mounted: %s%s (%s, %s)',
                 runtime.options.url ?? `http://localhost:${runtime.options.port ?? 3000}`,
