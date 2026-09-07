@@ -1,6 +1,6 @@
 {
   "name": "mikser-io-mcp-app",
-  "version": "11.1.0",
+  "version": "11.1.1",
   "description": "MCP Apps (SEP-1865) for mikser-io. Layouts declaring `mcpApp` frontmatter become interactive apps: a predeclared ui:// shell resource, per-entity rendering into it, and user actions delivered back as tool calls or to a webhook.",
   "main": "index.js",
   "type": "module",
