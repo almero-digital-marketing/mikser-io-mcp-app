@@ -1,0 +1,47 @@
+{
+  "name": "mikser-io-mcp-app",
+  "version": "11.0.0",
+  "description": "MCP Apps (SEP-1865) for mikser-io. Layouts declaring `mcpApp` frontmatter become interactive apps: a predeclared ui:// shell resource, per-entity rendering into it, and user actions delivered back as tool calls or to a webhook.",
+  "main": "index.js",
+  "type": "module",
+  "files": [
+    "index.js",
+    "public",
+    "README.md",
+    "LICENSE",
+    "assets"
+  ],
+  "scripts": {
+    "test": "npm run test:unit",
+    "test:unit": "node --test --test-reporter=spec 'test/unit/**/*.test.js'"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/almero-digital-marketing/mikser-io-mcp-app.git"
+  },
+  "keywords": [
+    "mikser",
+    "mikser-io",
+    "mcp",
+    "mcp-apps",
+    "model-context-protocol",
+    "ui",
+    "ai-agent"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/almero-digital-marketing/mikser-io-mcp-app/issues"
+  },
+  "homepage": "https://github.com/almero-digital-marketing/mikser-io-mcp-app#readme",
+  "peerDependencies": {
+    "mikser-io": "^11.2.0",
+    "mikser-io-mcp": "^11.1.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "mikser-io": "^11.2.0",
+    "mikser-io-mcp": "^11.1.0",
+    "zod": "^4.0.0"
+  }
+}
