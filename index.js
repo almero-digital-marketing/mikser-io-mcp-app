@@ -188,11 +188,19 @@ export function mcpApp(options = {}) {
                     ?? 30_000,
             })
 
-            // A layout's sidecar export, or undefined. Loaded through the
-            // layouts service rather than by importing another package's lib
-            // or re-implementing the path rule: the digest stamping that keeps
-            // an edited sidecar from answering out of cache lives there, and a
-            // second copy of it would drift.
+            // A layout's sidecar export, or undefined.
+            //
+            // Reached through the `layouts` SERVICE, never an import: this
+            // package depends on the contract — something provides `layouts`
+            // with a `sidecar(layout)` — and not on the package that happens
+            // to satisfy it. There is no dependency on mikser-io-layouts in
+            // this manifest, and none in this code; absent the service, the
+            // app surface still renders and still relays, it just reaches no
+            // handlers, and says so once.
+            //
+            // A service rather than a copy because the digest stamping that
+            // keeps an edited sidecar from answering out of cache lives with
+            // the loader, and a second copy of it would drift.
             const sidecarExport = async (layout, name) => {
                 const layoutsService = useService('layouts')
                 if (typeof layoutsService?.sidecar !== 'function') {
@@ -201,7 +209,7 @@ export function mcpApp(options = {}) {
                     // look like a handler that does nothing.
                     if (!sidecarExport.warned) {
                         sidecarExport.warned = true
-                        logger.warn('mcpApp: mikser-io-layouts does not offer sidecar loading (needs >= 11.2.0) — layout handlers (call/read/list) will not be reached.')
+                        logger.warn('mcpApp: no `layouts` service with sidecar loading (mikser-io-layouts >= 11.2.0 provides one) — layout handlers (call/read/list) will not be reached.')
                     }
                     return undefined
                 }

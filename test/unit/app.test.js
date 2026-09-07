@@ -987,3 +987,71 @@ describe('mcpApp: layout sidecars', () => {
             /No mcpApp layout named "ghost"/)
     })
 })
+
+// Independence from mikser-io-layouts. This package declares no dependency on
+// it and imports nothing from it: what it needs is a `layouts` service with a
+// `sidecar(layout)` method, whoever provides it. With no such service the app
+// surface must still stand up and still relay — a missing handler is a missing
+// handler, not a broken route.
+describe('mcpApp: no layouts service present', () => {
+    function withoutLayouts(entities) {
+        resetServices()
+        const mcp = fakeMcp()
+        const h = createHarness({ options: { port: 3001 }, entities })
+        provideService('mcp', mcp)   // and deliberately no 'layouts'
+        mcpApp()(h.core)
+        return { h, mcp }
+    }
+
+    const LAYOUT = {
+        id: '/layouts/order.liquid', collection: 'layouts', type: 'layout', name: 'order',
+        meta: { match: '@/orders/*', mcpApp: { mode: 'preview', actions: ['approve'] } },
+    }
+    const ORDER = { id: '/orders/1', collection: 'documents', name: 'orders/1' }
+
+    it('loads, mounts and registers the whole surface', async () => {
+        const { h, mcp } = withoutLayouts([LAYOUT, ORDER])
+        await assert.doesNotReject(() => h.runHook('loaded'))
+        assert.deepEqual(mcp.mounted.map(m => m.name), ['apps'])
+        for (const tool of ['mikser_app_preview', 'mikser_app_action']) {
+            assert.ok(mcp.registered.has(tool))
+        }
+    })
+
+    it('relays an action instead of failing it', async () => {
+        const { h, mcp } = withoutLayouts([LAYOUT, ORDER])
+        await h.runHook('loaded')
+        const result = await mcp.registered.get('mikser_app_action').handler({
+            entityId: '/orders/1', layoutId: '/layouts/order.liquid', action: 'approve', payload: { a: 1 },
+        })
+        assert.equal(result.isError, undefined)
+        assert.deepEqual(JSON.parse(result.content[0].text),
+            { entityId: '/orders/1', action: 'approve', payload: { a: 1 } })
+    })
+
+    it('says so ONCE as a warning, not an error per click', async () => {
+        // The distinction the guard exists for. Without it the absent service
+        // is a TypeError caught per call: an error-level line for every click,
+        // saying a fault happened where nothing is faulty. An optional
+        // service that is simply not installed is a warning, said once.
+        const { h, mcp } = withoutLayouts([LAYOUT, ORDER])
+        await h.runHook('loaded')
+        const act = () => mcp.registered.get('mikser_app_action').handler({
+            entityId: '/orders/1', layoutId: '/layouts/order.liquid', action: 'approve', payload: {},
+        })
+        await act(); await act(); await act()
+
+        const errors = h.logs.filter(entry => entry.level === 'error')
+        const warnings = h.logs.filter(entry =>
+            entry.level === 'warn' && String(entry.args[0]).includes('layouts` service'))
+        assert.deepEqual(errors, [], 'a missing optional service is not a fault')
+        assert.equal(warnings.length, 1, 'said once, not once per click')
+    })
+
+    it('answers an empty listing rather than throwing', async () => {
+        const { h, mcp } = withoutLayouts([LAYOUT])
+        await h.runHook('loaded')
+        const { resources } = await mcp.resources.get('mikser://apps/{layout}/{+path}').template.listCallback()
+        assert.deepEqual(resources, [])
+    })
+})

@@ -38,13 +38,11 @@
   "homepage": "https://github.com/almero-digital-marketing/mikser-io-mcp-app#readme",
   "peerDependencies": {
     "mikser-io": "^11.2.0",
-    "mikser-io-layouts": "^11.2.0",
     "mikser-io-mcp": "^11.2.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "mikser-io": "^11.2.0",
-    "mikser-io-layouts": "^11.2.0",
     "mikser-io-mcp": "^11.2.0",
     "vite": "^7.3.6",
     "vite-plugin-singlefile": "^2.3.3",

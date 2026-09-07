@@ -111,7 +111,9 @@ export async function read({ path, uri, layout, principal, logger }) {
 - **`list`** and **`read`** back the app's `listServerResources()` and `readServerResource()`. The sidecar names a `path`; mikser builds the URI under `mikser://apps/<layout>/<path>`, so a project never constructs mikser's URI space. `read` may answer with a string, a `{ text | blob, mimeType }` envelope, a full `{ contents: [...] }`, or any object (serialised as JSON — a `mimeType` key in a data object stays data).
 - **`principal`** is who called, when the route is gated; on a public route it's `anonymous` — a name, not a person, which is why a sidecar validates rather than trusts.
 
-Sidecars load through `mikser-io-layouts`'s own loader, so an edited handler takes effect under `--watch` by the same digest rule the render uses. Without `mikser-io-layouts` ≥ 11.2.0 there is no loader, and `mcpApp` says so once rather than leaving handlers quietly unreached.
+Sidecars load through the **`layouts` service**, not an import — this package declares no dependency on `mikser-io-layouts` and contains no reference to it beyond the service name. What it needs is the contract: something providing `layouts` with a `sidecar(layout)` method, which `mikser-io-layouts` ≥ 11.2.0 does. Going through the service rather than copying the loader is what makes an edited handler take effect under `--watch`, by the same digest rule the render uses.
+
+Without that service the app surface still renders and still relays actions; only the handlers go unreached, and `mcpApp` says so once at load rather than leaving it silent.
 
 An earlier version let a layout name an HTTP `handler.url` that mikser POSTed each action to, HMAC-signed. It is **gone**: an entire webhook protocol — an endpoint to mount, a signature to verify, a timeout, and a state where a click was neither relayed nor handled — to reach code already sitting in the project. A layout that still declares the block gets a plain relay; nothing is POSTed. Its successor is a handler beside the layout, in-process, which is where an action's meaning belongs.
 
