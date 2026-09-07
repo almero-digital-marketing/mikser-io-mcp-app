@@ -1055,3 +1055,29 @@ describe('mcpApp: no layouts service present', () => {
         assert.deepEqual(resources, [])
     })
 })
+
+// The built shell must not change when the version does. It embeds a
+// placeholder that index.js substitutes at load, because a version baked into
+// the artefact made every bump rewrite the file — and since `prepack` rebuilds
+// it, the release tool dirtied the very tree it was about to judge, then
+// refused to judge it and skipped the release.
+describe('the shell artefact is stable across versions', () => {
+    const shell = readFileSync(nodePath.join(import.meta.dirname, '..', '..', 'public', 'app-shell.html'), 'utf8')
+    const { version } = JSON.parse(
+        readFileSync(nodePath.join(import.meta.dirname, '..', '..', 'package.json'), 'utf8'))
+
+    it('carries a placeholder, not this package\'s version number', () => {
+        assert.match(shell, /__MIKSER_APP_SHELL_VERSION__/)
+        assert.ok(!shell.includes(`version:"${version}"`) && !shell.includes(`version: "${version}"`),
+            'a version in the artefact makes every bump a rebuild')
+    })
+
+    it('serves the real version, substituted at load', async () => {
+        const { h, mcp } = withMcp()
+        await h.runHook('loaded')
+        const served = (await mcp.resources.get('ui://mikser/app-shell')
+            .handler({ href: 'ui://mikser/app-shell' })).contents[0].text
+        assert.ok(served.includes(version), 'the host should still be told which version it is talking to')
+        assert.ok(!served.includes('__MIKSER_APP_SHELL_VERSION__'), 'and never see the placeholder')
+    })
+})

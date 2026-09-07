@@ -10,13 +10,17 @@
 // build — `npm run build` is for whoever changes the shell.
 import { defineConfig } from 'vite'
 import { viteSingleFile } from 'vite-plugin-singlefile'
-import { readFileSync } from 'node:fs'
 
-const { version } = JSON.parse(readFileSync('./package.json', 'utf8'))
+// The version is NOT baked in. Doing that made the built file change on every
+// bump, and since `prepack` rebuilds it, the release tool's own change
+// detection (npm pack --dry-run) dirtied the tree it was about to judge and
+// then refused to judge it. The shell carries a placeholder instead and
+// index.js substitutes the real version when it serves the resource.
+export const SHELL_VERSION_TOKEN = '__MIKSER_APP_SHELL_VERSION__'
 
 export default defineConfig({
     root: 'src/app',
-    define: { __SHELL_VERSION__: JSON.stringify(version) },
+    define: { __SHELL_VERSION__: JSON.stringify(SHELL_VERSION_TOKEN) },
     plugins: [viteSingleFile()],
     build: {
         outDir: '../../public',

@@ -76,7 +76,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // has no network of its own — the spec's CSP is `default-src 'none'`, so a
 // second file would be a script that can never load. Committed and published,
 // so installing this package needs no build.
+// The shell as built, with its version placeholder still in it. Substituted
+// below rather than baked in at build time: a version inside the artefact made
+// every bump change the file, and `prepack` rebuilding it left the tree dirty
+// exactly when the release tool was trying to decide what had moved.
+const SHELL_VERSION_TOKEN = '__MIKSER_APP_SHELL_VERSION__'
+const { version: PACKAGE_VERSION } = JSON.parse(
+    readFileSync(path.join(__dirname, 'package.json'), 'utf8'))
 const APP_SHELL_HTML = readFileSync(path.join(__dirname, 'public', 'app-shell.html'), 'utf8')
+    .replace(SHELL_VERSION_TOKEN, PACKAGE_VERSION)
 
 export const APP_SHELL_URI = 'ui://mikser/app-shell'
 // The SDK's constant, not a copy of it: `text/html;profile=mcp-app` is
