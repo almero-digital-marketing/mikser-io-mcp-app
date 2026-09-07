@@ -20,8 +20,6 @@
 //     description: Approve an order
 //     actions: [approve, reject]
 //     sandbox: [allow-scripts]
-//     handler:
-//       url: http://127.0.0.1:3000/internal/orders
 //   ---
 //   <button onclick="sendAction('approve', { id })">Approve</button>
 //
@@ -45,7 +43,6 @@
 import path from 'node:path'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { createHmac, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { useRenderer, matchEntity, useService } from 'mikser-io'
 // The protocol's own vocabulary and registration helpers, from the SDK rather
@@ -74,66 +71,6 @@ export { EXTENSION_ID }
 export const MODES_URI = 'mikser://mcp-app/modes'
 export const PREVIEW_TOOL = 'mikser_app_preview'
 export const ACTION_TOOL = 'mikser_app_action'
-
-// Deliver an action to a layout's declared webhook. Returns the parsed JSON
-// body, which becomes the tool result the iframe sees.
-//
-// HMAC: when `handler.secret` is set the request body is signed and sent as
-// `x-mikser-signature: sha256=<hex>`, which the receiver MUST verify before
-// acting. Unsigned when no secret is configured — a loopback handler in the
-// same process has nothing to prove to itself.
-//
-// Standalone and exported so it can be tested against a real HTTP server
-// rather than a mock, and so the action tool's own path stays readable.
-export async function forwardToHandler(handler, body) {
-    const { url, secret, timeout = 5000 } = handler
-    if (!url) throw new Error('forwardToHandler: handler.url is required')
-
-    const json = JSON.stringify({
-        ...body,
-        // Stamped inside the forward, not by the caller: a click that sat in
-        // a slow host still forwards with a fresh timestamp. A receiver that
-        // cares about arrival time records its own.
-        timestamp: new Date().toISOString(),
-    })
-
-    const headers = {
-        'content-type':        'application/json',
-        'x-mikser-layout-id':  body.layoutId ?? '',
-        'x-mikser-mode':       body.mode     ?? '',
-        // Correlates one click across mikser's log and the receiver's.
-        'x-mikser-request-id': randomUUID(),
-    }
-    if (secret) {
-        headers['x-mikser-signature'] = `sha256=${createHmac('sha256', secret).update(json).digest('hex')}`
-    }
-
-    const ac = new AbortController()
-    const timer = setTimeout(() => ac.abort(), timeout)
-    let res
-    try {
-        res = await fetch(url, { method: 'POST', headers, body: json, signal: ac.signal })
-    } catch (err) {
-        throw new Error(err.name === 'AbortError'
-            ? `handler ${url} timeout (${timeout}ms — no answer)`
-            : `handler ${url} unreachable: ${err.message}`)
-    } finally {
-        clearTimeout(timer)
-    }
-
-    if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        throw new Error(`handler ${url} answered ${res.status} ${res.statusText}: ${text.slice(0, 200)}`)
-    }
-
-    if ((res.headers.get('content-type') ?? '').includes('application/json')) return await res.json()
-
-    // A 2xx that is not JSON is off-spec for a handler, and still a
-    // successful click. Wrapped rather than rejected, because punishing a
-    // casual `res.send('ok')` would turn a working integration into a lost
-    // action — the one outcome this path exists to prevent.
-    return { ok: true, handlerResponse: await res.text() }
-}
 
 // Who a client thinks it is talking to on this route.
 //
@@ -424,10 +361,10 @@ export function mcpApp(options = {}) {
                 ACTION_TOOL,
                 {
                     ...scope,
-                    description: `Deliver a user action emitted from an mcpApp iframe. App-callable only — invisible to the agent, invoked exclusively by iframes opened via ${PREVIEW_TOOL}. Validates the action against the layout's declared \`mcpApp.actions\` list, then either returns { entityId, action, payload } as a pure relay or forwards it to the layout's \`handler.url\` webhook when one is declared.`,
+                    description: `Deliver a user action emitted from an mcpApp iframe. App-callable only — invisible to the agent, invoked exclusively by iframes opened via ${PREVIEW_TOOL}. Validates the action against the layout's declared \`mcpApp.actions\` list and returns { entityId, action, payload }.`,
                     inputSchema: {
                         entityId: z.string().describe('Entity the action targets (the same id the iframe was rendered for).'),
-                        layoutId: z.string().describe('Layout that rendered the iframe — used to look up the allowed-actions list and any handler config.'),
+                        layoutId: z.string().describe('Layout that rendered the iframe — used to look up the allowed-actions list.'),
                         action:   z.string().describe("Action name. Must appear in the layout's mcpApp.actions list."),
                         payload:  z.record(z.any()).optional().describe('Structured payload — form fields, a chosen status, whatever the layout sends. Schema is layout-defined; mikser passes it through.'),
                     },
@@ -452,30 +389,17 @@ export function mcpApp(options = {}) {
                             return fail(`Action "${action}" not in allowed list for ${layoutId}. Declared: [${allowed.join(', ')}]`)
                         }
 
-                        const relay = { entityId, action, payload }
-                        if (!declared.handler?.url) {
-                            logger.debug('%s %s/%s (pure relay)', ACTION_TOOL, entityId, action)
-                            return ok(relay)
-                        }
-
-                        try {
-                            const handlerResult = await forwardToHandler(declared.handler, {
-                                ...relay,
-                                layoutId,
-                                mode: declared.mode ?? 'preview',
-                            })
-                            logger.debug('%s forwarded %s/%s → %s OK',
-                                ACTION_TOOL, entityId, action, declared.handler.url)
-                            return ok(handlerResult)
-                        } catch (err) {
-                            // A click is never lost quietly. The handler's
-                            // failure is reported alongside the relay payload,
-                            // so the agent can retry or carry on without the
-                            // backend's acknowledgement — and knows which.
-                            logger.warn('%s handler failed (%s) — falling back to pure relay: %s',
-                                ACTION_TOOL, declared.handler.url, err.message)
-                            return ok({ ...relay, handlerError: err.message })
-                        }
+                        // Relay, and only relay. A layout used to be able to
+                        // name an HTTP `handler.url` that mikser POSTed the
+                        // action to, HMAC-signed — an entire webhook protocol
+                        // to reach code that already lives in the project. It
+                        // bought a loopback endpoint to mount, a signature to
+                        // verify, a timeout, and a failure mode where a click
+                        // is neither relayed nor handled. The successor is a
+                        // handler beside the layout, in-process, where the
+                        // action's meaning belongs.
+                        logger.debug('%s %s/%s relayed', ACTION_TOOL, entityId, action)
+                        return ok({ entityId, action, payload })
                     } catch (err) {
                         logger.error('%s error: %s', ACTION_TOOL, err.message)
                         return fail(err.message)

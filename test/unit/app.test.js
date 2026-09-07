@@ -482,99 +482,37 @@ describe('mcpApp: mikser_app_action', () => {
         assert.match(result.content[0].text, /does not declare mcpApp/)
     })
 
-    it('forwards to handler.url when declared and returns its JSON response as the tool result', async () => {
-        const { createServer } = await import('node:http')
-        const calls = []
-        const srv = createServer((req, res) => {
-            let body = ''
-            req.on('data', c => body += c)
-            req.on('end', () => {
-                calls.push({ url: req.url, body: JSON.parse(body) })
-                res.writeHead(200, { 'content-type': 'application/json' })
-                res.end(JSON.stringify({ ok: true, summary: 'ticket #4821 created' }))
-            })
-        })
-        await new Promise(r => srv.listen(0, r))
-        const port = srv.address().port
-
-        try {
-            const layout = {
-                id: '/layouts/article-approval.hbs',
-                collection: 'layouts',
-                type: 'layout',
-                name: 'article-approval',
-                meta: {
-                    match: '@/articles/*',
-                    mcpApp: {
-                        mode: 'approval',
-                        actions: ['approve', 'reject'],
-                        handler: { url: `http://127.0.0.1:${port}/hook` },
-                    },
-                },
-            }
-            const { h, mcp } = withMcp({}, [layout])
-            await h.runHook('loaded')
-
-            const tool = mcp.registered.get('mikser_app_action')
-            const result = await tool.handler({
-                entityId: '/articles/launch',
-                layoutId: '/layouts/article-approval.hbs',
-                action:   'approve',
-                payload:  { reviewer: 'alice' },
-            })
-
-            assert.equal(result.isError, undefined)
-            const data = JSON.parse(result.content[0].text)
-            assert.deepEqual(data, { ok: true, summary: 'ticket #4821 created' })
-
-            // Verify the forward carried the canonical fields.
-            assert.equal(calls.length, 1)
-            assert.equal(calls[0].url, '/hook')
-            assert.equal(calls[0].body.action,   'approve')
-            assert.equal(calls[0].body.entityId, '/articles/launch')
-            assert.equal(calls[0].body.layoutId, '/layouts/article-approval.hbs')
-            assert.equal(calls[0].body.mode,     'approval')
-            assert.deepEqual(calls[0].body.payload, { reviewer: 'alice' })
-        } finally {
-            await new Promise(r => srv.close(r))
-        }
-    })
-
-    it('falls back to pure relay with handlerError when handler.url fails', async () => {
+    it('ignores a layout that still declares a handler block', async () => {
+        // The webhook is gone: `handler.url` bought a loopback endpoint, an
+        // HMAC, a timeout and a state where a click was neither relayed nor
+        // handled. Legacy frontmatter must not resurrect it — a project that
+        // upgrades and forgets to delete the block gets a plain relay, not a
+        // POST to a URL nobody is listening on.
         const layout = {
-            id: '/layouts/article-approval.hbs',
+            id: '/layouts/order.hbs',
             collection: 'layouts',
             type: 'layout',
-            name: 'article-approval',
+            name: 'order',
             meta: {
-                match: '@/articles/*',
+                match: '@/orders/*',
                 mcpApp: {
-                    mode: 'approval',
+                    mode: 'preview',
                     actions: ['approve'],
-                    // Port 1 is reserved — guaranteed connection refusal.
-                    handler: { url: 'http://127.0.0.1:1/hook', timeout: 500 },
+                    handler: { url: 'http://127.0.0.1:9/never', secret: 'shh' },
                 },
             },
         }
         const { h, mcp } = withMcp({}, [layout])
         await h.runHook('loaded')
 
-        const tool = mcp.registered.get('mikser_app_action')
-        const result = await tool.handler({
-            entityId: '/articles/launch',
-            layoutId: '/layouts/article-approval.hbs',
-            action:   'approve',
-            payload:  {},
+        const result = await mcp.registered.get('mikser_app_action').handler({
+            entityId: '/orders/1', layoutId: '/layouts/order.hbs',
+            action: 'approve', payload: { note: 'ok' },
         })
-
-        // Fail-safe: never lose the user's click. Pure-relay payload
-        // PLUS handlerError so the agent knows the backend ack failed.
         assert.equal(result.isError, undefined)
-        const data = JSON.parse(result.content[0].text)
-        assert.equal(data.entityId, '/articles/launch')
-        assert.equal(data.action,   'approve')
-        assert.ok(data.handlerError, 'expected handlerError field on fallback')
-        assert.match(data.handlerError, /unreachable|timeout|ECONNREFUSED/i)
+        assert.deepEqual(JSON.parse(result.content[0].text), {
+            entityId: '/orders/1', action: 'approve', payload: { note: 'ok' },
+        })
     })
 })
 

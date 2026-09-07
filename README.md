@@ -14,8 +14,6 @@ mcpApp:
   description: Approve an order
   actions: [approve, reject]
   sandbox: [allow-scripts]
-  handler:
-    url: http://127.0.0.1:3000/internal/orders
 ---
 ```
 ```html
@@ -88,9 +86,11 @@ Sessions, transport, the auth rule and the protected-resource metadata stay in `
 
 ## What happens on a click
 
-`sendAction(action, payload?)` → `tools/call mikser_app_action` over the host's bridge → the action is checked against the layout's declared `actions` list → then either returned to the agent as `{ entityId, action, payload }`, or POSTed to `handler.url` when the layout declares one, with the handler's JSON becoming the result the iframe sees.
+`sendAction(action, payload?)` → `tools/call mikser_app_action` over the host's bridge → the action is checked against the layout's declared `actions` list → `{ entityId, action, payload }` comes back as the tool result, and the agent decides what it means.
 
-The allow-list is the auth boundary; there is no callId, signed URL or token on this channel, because the iframe's only route here is the host's already-authenticated MCP transport. A handler that fails does not lose the click — the relay payload comes back with `handlerError` set, so the agent knows which of the two happened. `handler.secret` adds an HMAC (`x-mikser-signature: sha256=…`) the receiver must verify.
+The allow-list is the auth boundary; there is no callId, signed URL or token on this channel, because the iframe's only route here is the host's already-authenticated MCP transport.
+
+An earlier version let a layout name an HTTP `handler.url` that mikser POSTed each action to, HMAC-signed. It is **gone**: an entire webhook protocol — an endpoint to mount, a signature to verify, a timeout, and a state where a click was neither relayed nor handled — to reach code already sitting in the project. A layout that still declares the block gets a plain relay; nothing is POSTed. Its successor is a handler beside the layout, in-process, which is where an action's meaning belongs.
 
 ## The shell is built, not hand-written
 

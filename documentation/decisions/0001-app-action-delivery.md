@@ -116,77 +116,22 @@ The host's MCP transport is already authenticated. The visibility flag already g
 
 `/api/mcp-ui/action/...` does not exist. Adding one would create a second delivery path with a different auth model, double the test surface, and offer no benefit on conformant hosts (CSP blocks the fetch) or non-conformant ones (the iframe wouldn't render anyway). One channel, one auth model.
 
-### Part C — Optional webhook handler
+### Part C — Optional webhook handler — **REMOVED**
 
-**C1. Layouts may declare a `handler` block in their `mcpApp` frontmatter.**
+Part C described an optional `mcpApp.handler.url` in a layout's frontmatter:
+mikser POSTed each action to that URL, HMAC-signed when `handler.secret` was
+set, and used the response as the tool result, falling back to a pure relay
+with `handlerError` when the call failed.
 
-```yaml
----
-match: "@/articles/*"
-mcpApp:
-  mode: approval
-  actions: [approve, reject, request-changes]
-  sandbox: [allow-scripts]
-  handler:
-    url:     https://app.example.com/mikser-actions
-    secret:  ${MIKSER_HANDLER_SECRET}    # optional, enables HMAC signing
-    timeout: 5000                        # optional, ms; default 5000
----
-```
+It is removed. What it cost to reach code that already lives in the project:
+an HTTP endpoint to mount and keep loopback-only, a signature to verify, a
+timeout to tune, and a failure mode in which a click was neither relayed nor
+handled. Verified in practice on one site, where honouring it meant a project
+plugin whose entire purpose was to mount an endpoint for mikser to call itself.
 
-When `handler.url` is set, `mikser_app_action`'s handler forwards the action data to that URL instead of returning the pure-relay payload. The handler's JSON response body becomes the tool result.
-
-**C2. The forwarded request is a standard webhook.**
-
-```http
-POST https://app.example.com/mikser-actions
-Content-Type: application/json
-X-Mikser-Signature: sha256=...
-X-Mikser-Request-Id: <opaque uuid for idempotency>
-X-Mikser-Layout-Id: /layouts/apps/post-approval.hbs
-X-Mikser-Mode: approval
-
-{
-    "entityId": "/documents/blog/launch.md",
-    "layoutId": "/layouts/apps/post-approval.hbs",
-    "action":   "approve",
-    "payload":  {},
-    "mode":     "approval",
-    "timestamp": "2026-06-07T15:00:00Z"
-}
-```
-
-`X-Mikser-Signature` is HMAC-SHA256 of the request body using `handler.secret`. Receivers verify before processing. If `secret` is unset, no signature is sent — fine for development; not recommended in production.
-
-**C3. The handler's JSON response is the tool result.**
-
-```json
-{
-    "ok": true,
-    "summary": "Committed to main; deployment queued (build #4821).",
-    "url": "https://app.example.com/deploys/4821",
-    "_meta": { "buildId": 4821 }
-}
-```
-
-Mikser passes this through to the agent unchanged. The agent composes its next message from it. No domain knowledge in mikser.
-
-**C4. Handler failures fall back to pure relay.**
-
-Network error, timeout, non-2xx response, non-JSON response: mikser logs a warning and resolves the tool call with the default `{ entityId, action, payload }` plus a `handlerError` field carrying the failure reason. The user's click is never lost.
-
-```json
-{
-    "entityId": "/documents/blog/launch.md",
-    "action":   "approve",
-    "payload":  {},
-    "handlerError": "Handler timeout (5000ms) — https://app.example.com/mikser-actions"
-}
-```
-
-**C5. The handler block is the entire extension surface.**
-
-Mikser does not learn about action semantics — what `approve` means, what `request-changes` should do, where the result goes. Adding that knowledge to mikser would violate ADR-0001 (`Mikser is the content layer of the application, not the app`). The webhook contract IS the extension point; if you want behaviour, write a service.
+A layout that still declares the block is not an error; the block is ignored
+and the action is relayed. Its successor is a handler beside the layout,
+in-process — see the note in the README. Parts A and B stand unchanged.
 
 ## Consequences
 
