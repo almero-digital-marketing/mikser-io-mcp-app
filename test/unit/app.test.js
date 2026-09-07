@@ -1081,3 +1081,112 @@ describe('the shell artefact is stable across versions', () => {
         assert.ok(!served.includes('__MIKSER_APP_SHELL_VERSION__'), 'and never see the placeholder')
     })
 })
+
+// Per-layout auth. A route can serve a public registration form and a
+// restricted approval app, so "may this caller reach the route" is not the
+// whole question. The check runs BEFORE dispatch, through the endpoint's
+// per-call hook, because a tool result saying "not allowed" is a successful
+// response that no host reads as "sign in".
+describe('mcpApp: per-layout auth', () => {
+    const PUBLIC_LAYOUT = {
+        id: '/layouts/registration.liquid', collection: 'layouts', type: 'layout', name: 'registration',
+        meta: { match: '@/bundles/*', mcpApp: { mode: 'register', actions: ['approve'] } },
+    }
+    const PRIVATE_LAYOUT = {
+        id: '/layouts/approval.liquid', collection: 'layouts', type: 'layout', name: 'approval',
+        meta: { match: '@/orders/*', mcpApp: { mode: 'approve', actions: ['approve'], auth: ['editors', 'admins'] } },
+    }
+    const FORM = { id: '/bundles/form.yml', collection: 'bundles', name: 'form' }
+    const ORDER = { id: '/orders/1', collection: 'documents', name: 'orders/1' }
+
+    function mounted(principal) {
+        resetServices()
+        const mcp = fakeMcp()
+        mcp.principal = () => principal
+        const h = createHarness({ options: { port: 3001 }, entities: [PUBLIC_LAYOUT, PRIVATE_LAYOUT, FORM, ORDER] })
+        provideService('mcp', mcp)
+        mcpApp()(h.core)
+        return { h, mcp }
+    }
+    const hookOf = (mcp) => mcp.mounted[0].authorizeCall
+    const previewCall = (entityId, mode) => ({ method: 'tools/call', params: { name: 'mikser_app_preview', arguments: { entityId, mode } } })
+    const actionCall = (layoutId) => ({ method: 'tools/call', params: { name: 'mikser_app_action', arguments: { layoutId, action: 'approve' } } })
+    const readCall = (uri) => ({ method: 'resources/read', params: { uri } })
+
+    const ANON = { subject: 'anonymous', roles: [] }
+    const EDITOR = { subject: 'kamen@almero.bg', roles: ['editors'] }
+    const OUTSIDER = { subject: 'someone@else', roles: ['guests'] }
+
+    it('leaves a layout with no auth key public', async () => {
+        const { h, mcp } = mounted(ANON)
+        await h.runHook('loaded')
+        assert.equal(await hookOf(mcp)({ call: previewCall('/bundles/form.yml', 'register'), principal: ANON }), null)
+    })
+
+    it('asks an anonymous caller to sign in — 401, which carries the challenge', async () => {
+        const { h, mcp } = mounted(ANON)
+        await h.runHook('loaded')
+        const refusal = await hookOf(mcp)({ call: previewCall('/orders/1', 'approve'), principal: ANON })
+        assert.equal(refusal.status, 401, 'a host only starts sign-in on 401')
+        assert.match(refusal.error, /requires sign-in/)
+    })
+
+    it('refuses a signed-in caller from the wrong group with 403, not 401', async () => {
+        // 403 says signing in again will not help. A 401 here would loop a
+        // client through a refresh that cannot fix anything.
+        const { h, mcp } = mounted(OUTSIDER)
+        await h.runHook('loaded')
+        const refusal = await hookOf(mcp)({ call: previewCall('/orders/1', 'approve'), principal: OUTSIDER })
+        assert.equal(refusal.status, 403)
+        assert.match(refusal.error, /restricted to \[editors, admins\]/)
+        assert.match(refusal.error, /someone@else is in \[guests\]/)
+    })
+
+    it('lets a member through', async () => {
+        const { h, mcp } = mounted(EDITOR)
+        await h.runHook('loaded')
+        assert.equal(await hookOf(mcp)({ call: previewCall('/orders/1', 'approve'), principal: EDITOR }), null)
+    })
+
+    it('gates the ACTION too — reachable without ever rendering the app', async () => {
+        const { h, mcp } = mounted(ANON)
+        await h.runHook('loaded')
+        const refusal = await hookOf(mcp)({ call: actionCall('/layouts/approval.liquid'), principal: ANON })
+        assert.equal(refusal.status, 401)
+        assert.equal(await hookOf(mcp)({ call: actionCall('/layouts/registration.liquid'), principal: ANON }), null)
+    })
+
+    it('gates the DATA behind the app', async () => {
+        const { h, mcp } = mounted(ANON)
+        await h.runHook('loaded')
+        const refusal = await hookOf(mcp)({ call: readCall('mikser://app/approval/rows'), principal: ANON })
+        assert.equal(refusal.status, 401, 'a gated app with open data is not gated')
+        assert.equal(await hookOf(mcp)({ call: readCall('mikser://app/registration/rows'), principal: ANON }), null)
+        assert.equal(await hookOf(mcp)({ call: readCall('mikser://mcp-app/modes'), principal: ANON }), null,
+            'the discovery resource is not layout data')
+    })
+
+    it('keeps restricted apps out of the modes listing', async () => {
+        const { h, mcp } = mounted(ANON)
+        await h.runHook('loaded')
+        const body = JSON.parse((await mcp.resources.get('mikser://mcp-app/modes')
+            .handler({ href: 'mikser://mcp-app/modes' })).contents[0].text)
+        assert.deepEqual(Object.keys(body.modes), ['register'], 'an anonymous caller sees only what it may use')
+    })
+
+    it('shows a member the restricted app in the listing', async () => {
+        const { h, mcp } = mounted(EDITOR)
+        await h.runHook('loaded')
+        const body = JSON.parse((await mcp.resources.get('mikser://mcp-app/modes')
+            .handler({ href: 'mikser://mcp-app/modes' })).contents[0].text)
+        assert.deepEqual(Object.keys(body.modes).sort(), ['approve', 'register'])
+    })
+
+    it('leaves other calls alone', async () => {
+        const { h, mcp } = mounted(ANON)
+        await h.runHook('loaded')
+        for (const call of [{ method: 'initialize' }, { method: 'tools/list' }, { method: 'resources/list' }]) {
+            assert.equal(await hookOf(mcp)({ call, principal: ANON }), null)
+        }
+    })
+})

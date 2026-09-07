@@ -75,6 +75,35 @@ Sessions, transport, the auth rule and the protected-resource metadata stay in `
 | `resources` | the shell and the modes list | same, for resources |
 | `prompts` | `[]` | same, for prompts |
 
+## Restricting an app
+
+An app is public unless its layout says otherwise. Name the groups that may use it:
+
+```yaml
+mcpApp:
+  mode: approve
+  actions: [approve, reject]
+  auth: [editors, admins]
+```
+
+Groups are the principal's `roles` — the ones in `groups.htgroup` — because a group is what a layout author can reason about. A layout with no `auth` key stays public, so upgrading changes nothing.
+
+The check runs **before the JSON-RPC dispatch**, through `mikser-io-mcp`'s per-call hook, and that placement is the point. A tool handler can only return a tool *result*, and a result saying "not allowed" is a successful response that no host reads as "sign in" — the user would be refused with no way to authenticate. Refusing the POST instead means:
+
+| | |
+|---|---|
+| nobody signed in | **401** with the `WWW-Authenticate` challenge, which is what makes a host's *"required when the server asks"* flow start |
+| signed in, wrong group | **403** — signing in again will not help, and a client that reads 401 here loops on a refresh that cannot fix anything |
+
+It covers every door into the layout, because gating one leaves the rest open:
+
+- `mikser_app_preview` — the app itself;
+- `mikser_app_action` — the click, reachable without ever rendering the app;
+- `resources/read` under `mikser://app/<layout>/…` — the data behind it;
+- `mikser://mcp-app/modes` and the data listing — a listing that names restricted apps hands an anonymous caller their descriptions and action names.
+
+One thing to get right in config: a route mounted `allowRemote: true` with no verifier has no identity to check, so a restricted layout there can only ever deny. Give the route `auth: identity.oauth()` for sign-in to be possible at all.
+
 ## The surface
 
 | | |

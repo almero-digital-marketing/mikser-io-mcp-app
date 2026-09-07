@@ -20,6 +20,7 @@
 //     description: Approve an order
 //     actions: [approve, reject]
 //     sandbox: [allow-scripts]
+//     auth: [editors, admins]      # optional: groups that may use this app
 //   ---
 //   <button onclick="sendAction('approve', { id })">Approve</button>
 //
@@ -143,6 +144,44 @@ function siteIdentity({ runtime, title, icons, name }) {
     }
 }
 
+// Who may use a given app.
+//
+// A layout without `mcpApp.auth` is public — which is every app that existed
+// before this, so an upgrade changes nothing. With it, the caller's GROUPS
+// (the principal's `roles`, from groups.htgroup) must intersect the list.
+//
+// Groups rather than capabilities because a group is what a layout author can
+// reason about and what the identity file already spells; capabilities are the
+// engine's vocabulary for what a role may do to collections, which is a
+// different question from "whose app is this".
+function requiredGroups(layout) {
+    const declared = layout?.meta?.mcpApp?.auth
+    if (!declared) return null
+    const groups = (Array.isArray(declared) ? declared : [declared])
+        .map(group => String(group).trim())
+        .filter(Boolean)
+    return groups.length ? groups : null
+}
+
+// The refusal, in the shape mikser-io-mcp's per-call hook expects.
+//
+// 401 when nobody is named, 403 when someone is: the difference is the whole
+// point. A 401 carries the challenge that tells a host where to sign in, so
+// "required when the server asks" works; a 403 says signing in again will not
+// help, which stops a client looping on a refresh it cannot fix.
+function refusalFor(layout, principal) {
+    const groups = requiredGroups(layout)
+    if (!groups) return null
+
+    const held = principal?.roles ?? []
+    if (held.some(group => groups.includes(group))) return null
+
+    const anonymous = !principal?.subject || principal.subject === 'anonymous'
+    return anonymous
+        ? { status: 401, error: `${layout.id} requires sign-in (one of: ${groups.join(', ')})` }
+        : { status: 403, error: `${layout.id} is restricted to [${groups.join(', ')}] and ${principal.subject} is in [${held.join(', ') || 'no groups'}]` }
+}
+
 export function mcpApp(options = {}) {
     // `name` is the endpoint's name AND what the registrations below scope
     // themselves to, so the two cannot drift apart. `path` defaults to
@@ -260,6 +299,11 @@ export function mcpApp(options = {}) {
                     const layouts = await appLayouts()
                     const modes = {}
                     for (const layout of layouts) {
+                        // A listing that names restricted apps hands an
+                        // anonymous caller their descriptions and action
+                        // names — that covers the door and leaves the sign on
+                        // it.
+                        if (refusalFor(layout, mcp.principal?.() ?? null)) continue
                         const declared = layout.meta.mcpApp
                         const mode = declared.mode ?? 'preview'
                         if (!modes[mode]) modes[mode] = []
@@ -325,6 +369,7 @@ export function mcpApp(options = {}) {
                     list: async () => {
                         const resources = []
                         for (const layout of await appLayouts()) {
+                            if (refusalFor(layout, mcp.principal?.() ?? null)) continue
                             const lister = await sidecarExport(layout, 'list')
                             if (!lister) continue
                             try {
@@ -621,10 +666,51 @@ export function mcpApp(options = {}) {
                 logger.error('mcpApp: mikser-io-mcp is too old — needs >= 11.2.0 for endpoint scoping and mountEndpoint. Not mounting %s.', routePath)
                 return
             }
+            // Every door into a restricted layout, refused before dispatch.
+            //
+            // Three of them, because gating one leaves the others open and a
+            // gate with a hole is worse than no gate: someone reads the code,
+            // sees `auth`, and stops looking.
+            //
+            //   mikser_app_preview      — the app itself
+            //   mikser_app_action       — the click, reachable without ever
+            //                             rendering the app
+            //   resources/read on
+            //   mikser://app/<layout>/… — the data BEHIND the app
+            const authorizeCall = async ({ call, principal }) => {
+                const method = call?.method
+                const params = call?.params ?? {}
+
+                if (method === 'tools/call' && params.name === PREVIEW_TOOL) {
+                    const entityId = params.arguments?.entityId
+                    const mode = params.arguments?.mode ?? 'preview'
+                    const entity = entityId ? await findEntity({ id: entityId }) : null
+                    if (!entity) return null   // "not found" is the tool's answer to give
+                    const layout = (await appLayouts(mode)).find(candidate =>
+                        candidate.meta?.match && matchEntity(entity, candidate.meta.match))
+                    return layout ? refusalFor(layout, principal) : null
+                }
+
+                if (method === 'tools/call' && params.name === ACTION_TOOL) {
+                    const layout = await findEntity({ id: params.arguments?.layoutId })
+                    return layout?.collection === 'layouts' ? refusalFor(layout, principal) : null
+                }
+
+                if (method === 'resources/read') {
+                    const uri = params.uri ?? ''
+                    if (!uri.startsWith('mikser://app/')) return null
+                    const layoutName = decodeURIComponent(uri.slice('mikser://app/'.length).split('/')[0] ?? '')
+                    const layout = (await appLayouts()).find(candidate => candidate.name === layoutName)
+                    return layout ? refusalFor(layout, principal) : null
+                }
+
+                return null
+            }
+
             const serverInfo = siteIdentity({ runtime, title, icons, name: serverName })
             const mounted = mcp.mountEndpoint({
                 name, path: routePath, auth, token, allowRemote,
-                tools, resources, prompts, serverInfo,
+                tools, resources, prompts, serverInfo, authorizeCall,
             })
             logger.info('MCP Apps mounted: %s%s (%s, %s)',
                 runtime.options.url ?? `http://localhost:${runtime.options.port ?? 3000}`,
