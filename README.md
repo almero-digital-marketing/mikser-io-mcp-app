@@ -90,6 +90,29 @@ Sessions, transport, the auth rule and the protected-resource metadata stay in `
 
 The allow-list is the auth boundary; there is no callId, signed URL or token on this channel, because the iframe's only route here is the host's already-authenticated MCP transport.
 
+## What an action means: the layout's sidecar
+
+`<layout>.js` — the same sidecar file whose `load` export the render already uses — answers for the app through three more named exports:
+
+```js
+// layouts/order.js
+export async function call({ action, payload, entity, layout, mode, principal, logger }) {
+    if (action === 'approve') return { ok: true, id: entity.meta.id }
+}
+export async function list({ layout, principal, logger }) {
+    return [{ path: 'rows', name: 'Order rows', mimeType: 'application/json' }]
+}
+export async function read({ path, uri, layout, principal, logger }) {
+    if (path === 'rows') return { rows: [/* … */] }
+}
+```
+
+- **`call`** receives a *declared* action — the `actions` list is checked first, so project code never sees an action the layout didn't offer. Its return value is the tool result the app sees; returning nothing still counts as handled. Throwing reports the failure naming the file, rather than losing the click.
+- **`list`** and **`read`** back the app's `listServerResources()` and `readServerResource()`. The sidecar names a `path`; mikser builds the URI under `mikser://apps/<layout>/<path>`, so a project never constructs mikser's URI space. `read` may answer with a string, a `{ text | blob, mimeType }` envelope, a full `{ contents: [...] }`, or any object (serialised as JSON — a `mimeType` key in a data object stays data).
+- **`principal`** is who called, when the route is gated; on a public route it's `anonymous` — a name, not a person, which is why a sidecar validates rather than trusts.
+
+Sidecars load through `mikser-io-layouts`'s own loader, so an edited handler takes effect under `--watch` by the same digest rule the render uses. Without `mikser-io-layouts` ≥ 11.2.0 there is no loader, and `mcpApp` says so once rather than leaving handlers quietly unreached.
+
 An earlier version let a layout name an HTTP `handler.url` that mikser POSTed each action to, HMAC-signed. It is **gone**: an entire webhook protocol — an endpoint to mount, a signature to verify, a timeout, and a state where a click was neither relayed nor handled — to reach code already sitting in the project. A layout that still declares the block gets a plain relay; nothing is POSTed. Its successor is a handler beside the layout, in-process, which is where an action's meaning belongs.
 
 ## The shell is built, not hand-written

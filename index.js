@@ -23,6 +23,21 @@
 //   ---
 //   <button onclick="sendAction('approve', { id })">Approve</button>
 //
+// What an action MEANS lives beside the layout, in its sidecar — the same
+// `<layout>.js` whose `load` the render already uses, with three more named
+// exports this surface reads:
+//
+//   call({ action, payload, entity, layout, mode, principal, logger })
+//        what the click does. Its return value is the tool result the app
+//        sees. Absent, the action is relayed to the agent unchanged.
+//   read({ uri, entity, layout, principal, logger })
+//        answers the app's readServerResource() for this layout's own data.
+//   list({ entity, layout, principal, logger })
+//        what read() can be asked for, for the app's listServerResources().
+//
+// In-process, with the caller's principal, and no endpoint to mount: the
+// webhook this replaced needed all three and could still lose a click.
+//
 // A layout is a BODY FRAGMENT. The shell (`ui://mikser/app-shell`) supplies
 // the document, the protocol handshake and `sendAction` — so a layout never
 // writes postMessage, and the protocol can change without touching content.
@@ -45,6 +60,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { useRenderer, matchEntity, useService } from 'mikser-io'
+import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 // The protocol's own vocabulary and registration helpers, from the SDK rather
 // than from our reading of the spec. The negotiation bug that made every host
 // show text instead of an app was exactly such a reading error.
@@ -69,6 +85,15 @@ export const APP_SHELL_URI = 'ui://mikser/app-shell'
 export const APP_SHELL_MIME = RESOURCE_MIME_TYPE
 export { EXTENSION_ID }
 export const MODES_URI = 'mikser://mcp-app/modes'
+// Where a layout's own data lives, for an app that asks for more than the
+// render gave it. Under mikser's existing scheme rather than a new one:
+// `ui://` is the spec's, reserved for app documents, and a third scheme would
+// be a vocabulary nobody else knows.
+//
+// The layout is ONE segment, percent-encoded, so a nested layout name
+// (`blog/post`) cannot be mistaken for a longer path.
+export const DATA_URI_TEMPLATE = 'mikser://apps/{layout}/{+path}'
+const dataUri = (layoutName, dataPath) => `mikser://apps/${encodeURIComponent(layoutName)}/${dataPath}`
 export const PREVIEW_TOOL = 'mikser_app_preview'
 export const ACTION_TOOL = 'mikser_app_action'
 
@@ -127,7 +152,7 @@ export function mcpApp(options = {}) {
         // `[]` excludes rather than allows: matchesAny() treats an empty list
         // as "nothing matches" and only `null` as "everything".
         tools     = [PREVIEW_TOOL, ACTION_TOOL],
-        resources = [APP_SHELL_URI, MODES_URI],
+        resources = [APP_SHELL_URI, MODES_URI, DATA_URI_TEMPLATE],
         prompts   = [],
         // Identity shown for this route. Defaults come from the site — see
         // siteIdentity above; `icons: []` is how you say "no icon" and is
@@ -162,6 +187,35 @@ export function mcpApp(options = {}) {
                     ?? runtime.config.preview?.renderTimeout
                     ?? 30_000,
             })
+
+            // A layout's sidecar export, or undefined. Loaded through the
+            // layouts service rather than by importing another package's lib
+            // or re-implementing the path rule: the digest stamping that keeps
+            // an edited sidecar from answering out of cache lives there, and a
+            // second copy of it would drift.
+            const sidecarExport = async (layout, name) => {
+                const layoutsService = useService('layouts')
+                if (typeof layoutsService?.sidecar !== 'function') {
+                    // Said once, not per click: without it a project's
+                    // handlers are simply never reached, and silence would
+                    // look like a handler that does nothing.
+                    if (!sidecarExport.warned) {
+                        sidecarExport.warned = true
+                        logger.warn('mcpApp: mikser-io-layouts does not offer sidecar loading (needs >= 11.2.0) — layout handlers (call/read/list) will not be reached.')
+                    }
+                    return undefined
+                }
+                try {
+                    const sidecar = await layoutsService.sidecar(layout)
+                    const handler = sidecar?.[name]
+                    return typeof handler === 'function' ? handler : undefined
+                } catch (err) {
+                    // A sidecar that will not even load is the project's
+                    // problem to see, and it is not this call's fault.
+                    logger.error('mcpApp: sidecar for %s failed to load: %s', layout?.id, err.message)
+                    return undefined
+                }
+            }
 
             const appLayouts = async (mode) => {
                 const all = await findEntities()
@@ -241,6 +295,105 @@ export function mcpApp(options = {}) {
                 async (uri) => ({
                     contents: [{ uri: uri.href, mimeType: APP_SHELL_MIME, text: APP_SHELL_HTML }],
                 }),
+            )
+
+            // A layout's own data, answered by its sidecar. A TEMPLATE
+            // because what exists is the project's business, not ours: `list`
+            // is what the sidecars say they have, and `read` routes one URI
+            // back to the layout that owns it.
+            mcp.registerResource(
+                'mikser-app-data',
+                new ResourceTemplate(DATA_URI_TEMPLATE, {
+                    list: async () => {
+                        const resources = []
+                        for (const layout of await appLayouts()) {
+                            const lister = await sidecarExport(layout, 'list')
+                            if (!lister) continue
+                            try {
+                                const entries = await lister({
+                                    layout,
+                                    principal: mcp.principal?.() ?? null,
+                                    logger,
+                                })
+                                for (const entry of entries ?? []) {
+                                    // The sidecar names a path; mikser owns
+                                    // the URI space, so mikser builds the URI.
+                                    if (!entry?.path) continue
+                                    resources.push({
+                                        uri: dataUri(layout.name, entry.path),
+                                        name: entry.name ?? entry.path,
+                                        description: entry.description ?? undefined,
+                                        mimeType: entry.mimeType ?? undefined,
+                                    })
+                                }
+                            } catch (err) {
+                                // One project's broken lister must not empty
+                                // the listing for every other app on the route.
+                                logger.error('mcpApp: list in %s.js threw: %s', layout.name, err.message)
+                            }
+                        }
+                        return { resources }
+                    },
+                }),
+                {
+                    ...scope,
+                    title: 'Data an app layout offers',
+                    description: "Whatever a layout's sidecar exposes through its `list` and `read` exports, for an app that needs more than the render handed it.",
+                },
+                async (uri, variables) => {
+                    const layoutName = decodeURIComponent(
+                        Array.isArray(variables?.layout) ? variables.layout[0] : variables?.layout ?? '')
+                    const dataPath = Array.isArray(variables?.path)
+                        ? variables.path.join('/')
+                        : variables?.path ?? ''
+                    const layout = (await appLayouts()).find(candidate => candidate.name === layoutName)
+                    if (!layout) throw new Error(`No mcpApp layout named "${layoutName}"`)
+
+                    const reader = await sidecarExport(layout, 'read')
+                    if (!reader) throw new Error(`${layoutName}.js exports no \`read\`, so it offers no data`)
+
+                    const answer = await reader({
+                        uri: uri.href,
+                        path: dataPath,
+                        layout,
+                        principal: mcp.principal?.() ?? null,
+                        logger,
+                    })
+                    // What a sidecar may answer with, in order, so that the
+                    // easy case is one line and the full case is still reachable:
+                    //
+                    //   a string           → text/plain
+                    //   { contents: [...] } → passed through untouched
+                    //   { text | blob, mimeType? } → an envelope it composed
+                    //   anything else      → the object IS the data, as JSON
+                    //
+                    // The last two are told apart by `text`/`blob` and nothing
+                    // else. Consuming a `mimeType` key off a data object would
+                    // mean an answer of `{ path, mimeType }` silently loses
+                    // half of itself — which is exactly what it did before
+                    // this rule was written down.
+                    if (typeof answer === 'string') {
+                        return { contents: [{ uri: uri.href, mimeType: 'text/plain', text: answer }] }
+                    }
+                    if (answer && Array.isArray(answer.contents)) return answer
+                    if (answer && (typeof answer.text === 'string' || typeof answer.blob === 'string')) {
+                        const { text, blob, mimeType } = answer
+                        return {
+                            contents: [{
+                                uri: uri.href,
+                                mimeType: mimeType ?? (blob ? 'application/octet-stream' : 'text/plain'),
+                                ...(blob ? { blob } : { text }),
+                            }],
+                        }
+                    }
+                    return {
+                        contents: [{
+                            uri: uri.href,
+                            mimeType: 'application/json',
+                            text: JSON.stringify(answer ?? null, null, 2),
+                        }],
+                    }
+                },
             )
 
             // registerAppTool for the same reason: the tool→app link is
@@ -389,17 +542,41 @@ export function mcpApp(options = {}) {
                             return fail(`Action "${action}" not in allowed list for ${layoutId}. Declared: [${allowed.join(', ')}]`)
                         }
 
-                        // Relay, and only relay. A layout used to be able to
-                        // name an HTTP `handler.url` that mikser POSTed the
-                        // action to, HMAC-signed — an entire webhook protocol
-                        // to reach code that already lives in the project. It
-                        // bought a loopback endpoint to mount, a signature to
-                        // verify, a timeout, and a failure mode where a click
-                        // is neither relayed nor handled. The successor is a
-                        // handler beside the layout, in-process, where the
-                        // action's meaning belongs.
-                        logger.debug('%s %s/%s relayed', ACTION_TOOL, entityId, action)
-                        return ok({ entityId, action, payload })
+                        const handler = await sidecarExport(layout, 'call')
+                        if (!handler) {
+                            // No sidecar, or one that does not handle actions:
+                            // the click goes to the agent, which is a complete
+                            // answer and the only one before this existed.
+                            logger.debug('%s %s/%s relayed', ACTION_TOOL, entityId, action)
+                            return ok({ entityId, action, payload })
+                        }
+
+                        const entity = await findEntity({ id: entityId })
+                        try {
+                            const outcome = await handler({
+                                action,
+                                payload,
+                                entity,
+                                layout,
+                                mode: declared.mode ?? 'preview',
+                                // Who clicked, when the route is gated. Null on
+                                // a public route — which is most of them, and
+                                // is why a sidecar validates rather than trusts.
+                                principal: mcp.principal?.() ?? null,
+                                logger,
+                            })
+                            logger.debug('%s %s/%s handled by the sidecar', ACTION_TOOL, entityId, action)
+                            // A handler that returns nothing still handled the
+                            // action; saying so beats an empty result the app
+                            // cannot tell from a failure.
+                            return ok(outcome ?? { entityId, action, handled: true })
+                        } catch (err) {
+                            // The click is not lost: the app is told which of
+                            // "not handled" and "handler threw" happened, and
+                            // the engine's log carries the stack.
+                            logger.error('%s %s/%s sidecar threw: %s', ACTION_TOOL, entityId, action, err.stack ?? err.message)
+                            return fail(`Action "${action}" failed in ${layout.name}.js: ${err.message}`)
+                        }
                     } catch (err) {
                         logger.error('%s error: %s', ACTION_TOOL, err.message)
                         return fail(err.message)

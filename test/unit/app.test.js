@@ -28,8 +28,16 @@ function fakeMcp() {
         registerTool(name, config, handler) {
             tools.set(name, { ...config, handler })
         },
-        registerResource(name, uri, metadata, handler) {
-            resources.set(uri, { name, metadata, handler })
+        registerResource(name, uriOrTemplate, metadata, handler) {
+            // A ResourceTemplate registration keys on its pattern, so a test
+            // can reach both the pattern's list callback and the read handler.
+            const uri = typeof uriOrTemplate === 'string'
+                ? uriOrTemplate
+                : uriOrTemplate.uriTemplate.toString()
+            resources.set(uri, {
+                name, metadata, handler,
+                template: typeof uriOrTemplate === 'string' ? null : uriOrTemplate,
+            })
         },
         registerPrompt() {},
         // The seam mikser-io-mcp >= 11.2.0 exposes so a package can own its
@@ -592,7 +600,13 @@ describe('mcpApp: its own route', () => {
         // whole purpose is running an app.
         const [mount] = mcp.mounted
         assert.deepEqual(mount.tools, ['mikser_app_preview', 'mikser_app_action'])
-        assert.deepEqual(mount.resources, ['ui://mikser/app-shell', 'mikser://mcp-app/modes'])
+        assert.deepEqual(mount.resources, [
+            'ui://mikser/app-shell',
+            'mikser://mcp-app/modes',
+            // The data template: what a layout's sidecar offers through its
+            // `list` and `read` exports.
+            'mikser://apps/{layout}/{+path}',
+        ])
         assert.deepEqual(mount.prompts, [], 'an empty list excludes; null would allow everything')
 
         for (const tool of ['mikser_app_preview', 'mikser_app_action']) {
@@ -804,5 +818,172 @@ describe('the built app shell', () => {
         // These routes serve a site's visitors. The previous shell revealed a
         // protocol panel on every render.
         assert.doesNotMatch(shell, /mikser-debug/, 'the debug panel is gone')
+    })
+})
+
+// The sidecar. `<layout>.js` already carries a layout's data layer through its
+// `load` export; these three exports are the same file answering for the app.
+// It replaced an HTTP webhook, so the tests worth having are about what the
+// webhook could get wrong: a click that is neither relayed nor handled, and a
+// handler whose failure disappears.
+describe('mcpApp: layout sidecars', () => {
+    const APP_LAYOUT = {
+        id: '/layouts/order.liquid',
+        collection: 'layouts',
+        type: 'layout',
+        name: 'order',
+        meta: { match: '@/orders/*', mcpApp: { mode: 'preview', actions: ['approve'] } },
+    }
+    const ORDER = { id: '/orders/1', collection: 'documents', name: 'orders/1', meta: { total: 42 } }
+
+    // A fake `layouts` service, which is how the real one is reached — the
+    // loader with its digest stamping lives in mikser-io-layouts, and reaching
+    // around it would be a second copy of the rule that keeps an edited
+    // sidecar from answering out of cache.
+    function withSidecar(sidecar, entities = [APP_LAYOUT, ORDER]) {
+        resetServices()
+        const mcp = fakeMcp()
+        const h = createHarness({ options: { port: 3001 }, entities })
+        provideService('mcp', mcp)
+        provideService('layouts', { sidecar: async () => sidecar })
+        mcpApp()(h.core)
+        return { h, mcp }
+    }
+
+    const actionOn = (mcp, args) => mcp.registered.get('mikser_app_action').handler({
+        entityId: '/orders/1', layoutId: '/layouts/order.liquid', action: 'approve', payload: { note: 'ok' },
+        ...args,
+    })
+
+    it('hands a declared action to the sidecar\'s call, with the entity and the layout', async () => {
+        const seen = []
+        const { h, mcp } = withSidecar({
+            call: async (context) => { seen.push(context); return { ok: true, total: context.entity?.meta?.total } },
+        })
+        await h.runHook('loaded')
+
+        const result = await actionOn(mcp)
+        assert.deepEqual(JSON.parse(result.content[0].text), { ok: true, total: 42 })
+        assert.equal(seen.length, 1)
+        assert.equal(seen[0].action, 'approve')
+        assert.deepEqual(seen[0].payload, { note: 'ok' })
+        assert.equal(seen[0].entity.id, '/orders/1')
+        assert.equal(seen[0].layout.id, '/layouts/order.liquid')
+        assert.equal(seen[0].mode, 'preview')
+        assert.equal('principal' in seen[0], true, 'the sidecar is told who clicked, or that nobody is named')
+    })
+
+    it('never reaches the sidecar for an undeclared action', async () => {
+        let called = false
+        const { h, mcp } = withSidecar({ call: async () => { called = true } })
+        await h.runHook('loaded')
+
+        const result = await actionOn(mcp, { action: 'wipe' })
+        assert.equal(result.isError, true)
+        assert.equal(called, false, 'the allow-list is checked before the project\'s code runs')
+    })
+
+    it('relays when the layout has no sidecar, or one that does not handle actions', async () => {
+        for (const sidecar of [null, { load: () => ({}) }]) {
+            const { h, mcp } = withSidecar(sidecar)
+            await h.runHook('loaded')
+            const result = await actionOn(mcp)
+            assert.equal(result.isError, undefined)
+            assert.deepEqual(JSON.parse(result.content[0].text), {
+                entityId: '/orders/1', action: 'approve', payload: { note: 'ok' },
+            })
+        }
+    })
+
+    it('reports a handler that throws instead of losing the click', async () => {
+        // The webhook's worst state was a click neither relayed nor handled.
+        // A sidecar that throws says so, naming the file to open.
+        const { h, mcp } = withSidecar({ call: async () => { throw new Error('no such customer') } })
+        await h.runHook('loaded')
+
+        const result = await actionOn(mcp)
+        assert.equal(result.isError, true)
+        assert.match(result.content[0].text, /order\.js: no such customer/)
+    })
+
+    it('treats a handler that returns nothing as handled', async () => {
+        const { h, mcp } = withSidecar({ call: async () => undefined })
+        await h.runHook('loaded')
+        const result = await actionOn(mcp)
+        assert.deepEqual(JSON.parse(result.content[0].text),
+            { entityId: '/orders/1', action: 'approve', handled: true })
+    })
+
+    it('lists what a sidecar offers, under mikser\'s own uri space', async () => {
+        const { h, mcp } = withSidecar({
+            list: async () => [
+                { path: 'rows', name: 'Order rows', mimeType: 'application/json' },
+                { path: 'nested/deep.json' },
+                { name: 'no path — skipped' },
+            ],
+        })
+        await h.runHook('loaded')
+
+        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
+        const { resources } = await template.template.listCallback()
+        assert.deepEqual(resources.map(r => r.uri), [
+            'mikser://apps/order/rows',
+            'mikser://apps/order/nested/deep.json',
+        ])
+        assert.equal(resources[0].name, 'Order rows')
+    })
+
+    it('answers a read by routing the uri back to the layout that owns it', async () => {
+        const { h, mcp } = withSidecar({
+            read: async ({ path, layout }) => ({ path, layout: layout.name }),
+        })
+        await h.runHook('loaded')
+
+        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
+        const result = await template.handler(
+            new URL('mikser://apps/order/nested/deep.json'), { layout: 'order', path: 'nested/deep.json' })
+        assert.equal(result.contents[0].mimeType, 'application/json')
+        assert.deepEqual(JSON.parse(result.contents[0].text), { path: 'nested/deep.json', layout: 'order' })
+    })
+
+    it('keeps a data object whole — a mimeType key is data, not an envelope', async () => {
+        // The envelope is `text`/`blob`. Consuming `mimeType` off a plain
+        // answer made `{ path, mimeType }` lose half of itself.
+        const { h, mcp } = withSidecar({ read: async () => ({ path: 'x', mimeType: 'text/csv' }) })
+        await h.runHook('loaded')
+        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
+        const result = await template.handler(new URL('mikser://apps/order/x'), { layout: 'order', path: 'x' })
+        assert.equal(result.contents[0].mimeType, 'application/json')
+        assert.deepEqual(JSON.parse(result.contents[0].text), { path: 'x', mimeType: 'text/csv' })
+    })
+
+    it('lets a sidecar compose the envelope with text and a mime type', async () => {
+        const { h, mcp } = withSidecar({ read: async () => ({ text: 'a,b\n1,2', mimeType: 'text/csv' }) })
+        await h.runHook('loaded')
+        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
+        const result = await template.handler(new URL('mikser://apps/order/rows.csv'), { layout: 'order', path: 'rows.csv' })
+        assert.deepEqual(result.contents[0], {
+            uri: 'mikser://apps/order/rows.csv', mimeType: 'text/csv', text: 'a,b\n1,2',
+        })
+    })
+
+    it('accepts a plain string from read, so a sidecar can answer and be done', async () => {
+        const { h, mcp } = withSidecar({ read: async () => 'just text' })
+        await h.runHook('loaded')
+        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
+        const result = await template.handler(new URL('mikser://apps/order/x'), { layout: 'order', path: 'x' })
+        assert.deepEqual(result.contents[0], { uri: 'mikser://apps/order/x', mimeType: 'text/plain', text: 'just text' })
+    })
+
+    it('says which layout and which export is missing, rather than answering empty', async () => {
+        const { h, mcp } = withSidecar({})
+        await h.runHook('loaded')
+        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
+        await assert.rejects(
+            () => template.handler(new URL('mikser://apps/order/x'), { layout: 'order', path: 'x' }),
+            /order\.js exports no `read`/)
+        await assert.rejects(
+            () => template.handler(new URL('mikser://apps/ghost/x'), { layout: 'ghost', path: 'x' }),
+            /No mcpApp layout named "ghost"/)
     })
 })
