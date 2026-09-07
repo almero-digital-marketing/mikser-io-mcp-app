@@ -25,8 +25,6 @@ mcpApp:
   actions:                     # action names mikser_app_action will accept
     - approve
     - reject
-  sandbox:                     # iframe sandbox flags the host should apply
-    - allow-scripts
   # handler:                   # optional — external webhook for the action
   #   url: https://review.example.com/mikser/action
   #   secret: env:REVIEW_SIGNING_SECRET
@@ -64,6 +62,7 @@ A few constraints worth knowing when authoring `mcpApp` layouts:
 - **Layouts are body fragments, not full documents.** The shell wraps `<!DOCTYPE>` / `<html>` / `<head>` / `<body>` around your content. Adding them yourself is harmless but redundant — the host strips them during innerHTML injection. Inline `<style>` is fine (browsers honor it inside a div). Inline `<script>` is fine (the shell re-executes innerHTML-injected scripts so they take effect).
 - **`sendAction(action, payload?)` is the only protocol API you need.** It's exposed on `window` by the shell. Returns a Promise resolving with `mikser_app_action`'s tool result. The shell handles `ui/initialize`, target origins, timeouts, and the pending-id dance. Layouts that try to reimplement the protocol won't break, but they also don't gain anything.
 - **The iframe is cross-origin from the host and the default CSP blocks all network.** Per MCP Apps spec, "The Host and the Sandbox MUST have different origins" and the default CSP is `default-src 'none'; connect-src 'none'`. So `fetch` to *any* URL from inside the iframe is blocked — including back to mikser. The shell's only outbound channel is `window.parent.postMessage`.
+- **`sandbox` is gone.** It used to list iframe sandbox tokens here. No conformant host read them: under SEP-1865 the sandbox is the host's decision — that is what makes rendering a server's HTML safe — and an app may only request Permissions Policy features (camera, microphone, geolocation, clipboard) through the spec's own mechanism. A layout that still declares `sandbox` is ignored.
 - **Same layout system, different output path.** The MCP Apps layout doesn't have to be the same file as your production layout; declare a focused, sandbox-safe variant under a distinct name. mikser's auto-match won't pick it up for normal rendering as long as the filename doesn't collide.
 - **Frontmatter is stripped at read time.** The layouts plugin parses YAML inside `readLayoutContent`, populates `entity.meta`, and stores a clean body. The renderer never sees the YAML.
 - **ECT is the exception.** `mikser-io-render-ect` still file-loads layouts through ECT's own resolver, so YAML frontmatter on `.ect` layouts renders as literal text. Pick `hbs` / `eta` / `liquid` for layouts that need `mcpApp` frontmatter.
@@ -85,8 +84,6 @@ mcpApp:
   mode: preview
   description: "Read-only article preview. Use to visually confirm a proposed edit before committing."
   actions: []
-  sandbox: []
----
 <style>
   article h1 { margin-bottom: 0.25em; }
   article .meta { color: #6b7280; font-size: 0.875em; margin-bottom: 1.5em; }
@@ -98,7 +95,7 @@ mcpApp:
 </article>
 ```
 
-The empty `actions: []` and `sandbox: []` signal "this is read-only — no script execution needed." The agent invokes it and shows the result; the user reads it; the conversation continues. No back-channel.
+An empty `actions: []` signals "this is read-only — nothing to send back." The agent invokes it and shows the result; the user reads it; the conversation continues. No back-channel.
 
 #### 2. Single-action button — publish / unpublish
 
@@ -111,8 +108,6 @@ mcpApp:
   mode: publish-switch
   description: "Product publish switcher. Shows the current state and one button to flip it. Result includes the desired new state."
   actions: [toggle-publish]
-  sandbox: [allow-scripts]
----
 <style>
   body { font: 16px system-ui; padding: 2em; }
   #toggle { padding: 0.6em 1.4em; font-size: 1em; border: 0; border-radius: 4px; background: #2563eb; color: white; cursor: pointer; }
@@ -149,8 +144,6 @@ mcpApp:
   mode: approval
   description: "Editorial approval for a blog post. Returns one of approve / reject / request-changes. For request-changes, payload includes a free-text note from the reviewer."
   actions: [approve, reject, request-changes]
-  sandbox: [allow-scripts]
----
 <style>
   body { font: 16px system-ui; max-width: 720px; margin: 2em auto; padding: 0 1em; }
   .actions { display: flex; gap: 0.5em; align-items: center; }
@@ -205,8 +198,6 @@ mcpApp:
   mode: edit-seo
   description: "Edit SEO fields (title, description, og:image alt) inline. Result payload is a patch object with only the changed fields."
   actions: [save, cancel]
-  sandbox: [allow-scripts]
----
 <style>
   body { font: 16px system-ui; max-width: 600px; margin: 2em auto; padding: 0 1em; }
   form { display: grid; gap: 1em; }
@@ -272,8 +263,6 @@ mcpApp:
   mode: tag-picker
   description: "Multi-select tag picker. Payload is the final array of tag slugs (not a diff)."
   actions: [save, cancel]
-  sandbox: [allow-scripts]
----
 <style>
   body { font: 16px system-ui; padding: 2em; max-width: 500px; }
   #tags { display: flex; flex-wrap: wrap; gap: 0.4em; margin: 1em 0; }
@@ -323,8 +312,6 @@ mcpApp:
   mode: triage
   description: "Set a support ticket's status. Returns one action `set-status` with the chosen value in payload.status."
   actions: [set-status]
-  sandbox: [allow-scripts]
----
 <style>
   body { font: 16px system-ui; padding: 2em; max-width: 600px; }
   .statuses { display: flex; gap: 0.5em; margin-top: 1.5em; }
@@ -364,8 +351,6 @@ mcpApp:
   mode: setup
   description: "Three-step onboarding wizard. The iframe handles steps internally; the agent only sees the final `complete` action with the merged answers, or `cancel` if abandoned."
   actions: [complete, cancel]
-  sandbox: [allow-scripts]
----
 <style>
   body { font: 16px system-ui; padding: 2em; max-width: 520px; }
   #progress { display: flex; gap: 0.25em; margin-bottom: 2em; }
@@ -447,7 +432,7 @@ The seven examples above lean on the same conventions. Worth naming them so they
 - **`sendAction(action, payload?)` is the contract** — exposed on `window` by the shell at `ui://mikser/app-shell`. Layouts call it; the shell relays `tools/call` against `mikser_app_action` to the host; the host bridges it to mikser. Returns a Promise resolving with `mikser_app_action`'s tool result. `action` MUST be a name declared in your layout's `mcpApp.actions` list — mikser rejects anything else. You don't need to thread `entityId` / `layoutId` yourself; the shell tracks both from `ui/notifications/tool-result`.
 - **Layouts are body fragments, not full documents.** No `<!DOCTYPE>`, no `<html>` / `<head>` / `<body>` — the shell wraps your content. Inline `<style>` and `<script>` are fine and survive `innerHTML` injection (the shell re-executes scripts).
 - **Embed entity data with `{{{json document.id}}}` (or the equivalent in your engine).** Triple-stash in Handlebars / `| json` in Liquid / `<%= JSON.stringify(it.x) %>` in Eta. Prevents injection if a field contains quotes — never interpolate raw string fields into a `'string-literal'` in script tags.
-- **Pick the smallest sandbox that works.** Pure render: `sandbox: []` (no scripts at all). Click-only interaction: `sandbox: [allow-scripts]`. `postMessage` works at `allow-scripts` because it's not a network operation in the CSP sense. Don't ship `allow-same-origin` casually — it lifts most of the cross-origin protection the host's double-iframe setup gives you.
+- **The sandbox is not yours to pick.** It used to be declared here; no conformant host read it. Under SEP-1865 the host sandboxes the iframe — that is what makes rendering a server's HTML safe, and a server relaxing it would defeat the point. What an app may request is a Permissions Policy feature (camera, microphone, geolocation, clipboard) through the spec's own mechanism, which is a different axis and not plumbed here yet. Assume scripts run and no same-origin access: `postMessage` works, reading the host document does not.
 - **Send only what changed.** Multi-field forms (#4) should diff against the initial values and post only the deltas. Single-state toggles (#2, #6) send the target state, not the current state. Wizards (#7) send the merged final answers. Smaller payloads are cheaper for the agent to reason about.
 - **Style inline, ship self-contained.** No external CSS, no web fonts, no analytics — the default MCP Apps CSP is `default-src 'none'; connect-src 'none'`. The shell's only outbound channel is `postMessage` to the host. System fonts (`font-family: system-ui`) and inline `<style>` are fine; everything else has to be embedded.
 - **Use the layout body to compute what the agent shouldn't.** Example #2's payload pre-computes the *new* publish state. Example #4 pre-computes the diff. Pushing logic to render-time means the agent receives ready-to-act-on data rather than raw inputs it has to interpret.

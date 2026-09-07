@@ -19,7 +19,6 @@
 //     mode: approve
 //     description: Approve an order
 //     actions: [approve, reject]
-//     sandbox: [allow-scripts]
 //     auth: [editors, admins]      # optional: groups that may use this app
 //   ---
 //   <button onclick="sendAction('approve', { id })">Approve</button>
@@ -154,6 +153,18 @@ function siteIdentity({ runtime, title, icons, name }) {
 // reason about and what the identity file already spells; capabilities are the
 // engine's vocabulary for what a role may do to collections, which is a
 // different question from "whose app is this".
+// `mcpApp.sandbox` is GONE, and a layout that still declares it is ignored.
+//
+// It was mcp-ui metadata that survived the move: a list of iframe `sandbox`
+// tokens mikser emitted and no conformant host read. Under SEP-1865 the
+// sandbox is the HOST's decision — it is what makes rendering a server's HTML
+// safe, and not something the server may relax — and the only thing an app may
+// ask for is a Permissions Policy feature (camera, microphone, geolocation,
+// clipboardWrite) through the spec's own `McpUiResourcePermissions`, which is
+// a different axis and not yet plumbed here.
+//
+// Removed rather than kept as documentation, because in frontmatter it read
+// like a security control and was not one.
 function requiredGroups(layout) {
     const declared = layout?.meta?.mcpApp?.auth
     if (!declared) return null
@@ -312,7 +323,6 @@ export function mcpApp(options = {}) {
                             match:       layout.meta.match ?? null,
                             description: declared.description ?? null,
                             actions:     declared.actions     ?? [],
-                            sandbox:     declared.sandbox     ?? ['allow-scripts'],
                         })
                     }
                     return {
@@ -554,7 +564,6 @@ export function mcpApp(options = {}) {
                                 mode,
                                 description: declared.description ?? null,
                                 actions:     declared.actions     ?? [],
-                                sandbox:     declared.sandbox     ?? ['allow-scripts'],
                                 actionTool:  ACTION_TOOL,
                             },
                         }

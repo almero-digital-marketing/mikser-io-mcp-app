@@ -311,7 +311,7 @@ describe('mcpApp: mikser_app_preview dispatch', () => {
         assert.equal(articleEntry.match, '@/articles/*')
         assert.equal(articleEntry.description, 'Article preview')
         assert.deepEqual(articleEntry.actions, ['approve', 'reject'])
-        assert.deepEqual(articleEntry.sandbox, ['allow-scripts']) // default sandbox
+        assert.equal('sandbox' in articleEntry, false, 'sandbox is gone from the contract, not defaulted')
 
         // Default-mode layout landed under 'preview'.
         const landingEntry = payload.modes.preview.find(c => c.layoutId === '/layouts/landing.hbs')

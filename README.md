@@ -13,7 +13,6 @@ mcpApp:
   mode: approve
   description: Approve an order
   actions: [approve, reject]
-  sandbox: [allow-scripts]
 ---
 ```
 ```html
