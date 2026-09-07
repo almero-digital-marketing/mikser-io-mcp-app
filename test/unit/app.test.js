@@ -589,11 +589,11 @@ describe('mcpApp: the mcp-ui vocabulary is not accepted', () => {
 // route whose tool list is the app surface, and the action tool is
 // app-callable by spec, so it must not reach the agent's endpoint.
 describe('mcpApp: its own route', () => {
-    it('mounts at /apps by default and scopes every registration to it', async () => {
+    it('mounts at /app by default and scopes every registration to it', async () => {
         const { h, mcp } = withMcp()
         await h.runHook('loaded')
 
-        assert.deepEqual(mcp.mounted.map(m => [m.name, m.path]), [['apps', '/apps']])
+        assert.deepEqual(mcp.mounted.map(m => [m.name, m.path]), [['app', '/app']])
         // The route carries THIS surface and nothing else. Mounted without
         // filters it would serve every shared tool as well — 21 of them on
         // gpointpremium, mikser_delete_entity included — on a route whose
@@ -605,16 +605,16 @@ describe('mcpApp: its own route', () => {
             'mikser://mcp-app/modes',
             // The data template: what a layout's sidecar offers through its
             // `list` and `read` exports.
-            'mikser://apps/{layout}/{+path}',
+            'mikser://app/{layout}/{+path}',
         ])
         assert.deepEqual(mount.prompts, [], 'an empty list excludes; null would allow everything')
 
         for (const tool of ['mikser_app_preview', 'mikser_app_action']) {
-            assert.deepEqual(mcp.registered.get(tool).endpoints, ['apps'],
+            assert.deepEqual(mcp.registered.get(tool).endpoints, ['app'],
                 `${tool} must be scoped to the apps endpoint, not bound on /mcp`)
         }
         for (const uri of ['ui://mikser/app-shell', 'mikser://mcp-app/modes']) {
-            assert.deepEqual(mcp.resources.get(uri).metadata.endpoints, ['apps'],
+            assert.deepEqual(mcp.resources.get(uri).metadata.endpoints, ['app'],
                 `${uri} must be scoped to the apps endpoint`)
         }
     })
@@ -691,7 +691,7 @@ describe('mcpApp: the route carries the site\'s identity, not mikser\'s', () => 
         assert.deepEqual(serverInfo.icons, [], 'no icon beats someone else\'s mark')
         assert.ok(!JSON.stringify(serverInfo).toLowerCase().includes('mikser-mark'))
         assert.equal(serverInfo.title, 'gpointpremium.com')
-        assert.equal(serverInfo.name, 'gpointpremium.com-apps')
+        assert.equal(serverInfo.name, 'gpointpremium.com-app')
         assert.equal(serverInfo.websiteUrl, 'https://gpointpremium.com')
     })
 
@@ -742,7 +742,7 @@ describe('mcpApp: the route carries the site\'s identity, not mikser\'s', () => 
         await h.runHook('loaded')
         const { serverInfo } = mcp.mounted[0]
         assert.equal(serverInfo.title, 'premium')
-        assert.equal(serverInfo.name, 'premium-apps')
+        assert.equal(serverInfo.name, 'premium-app')
         assert.deepEqual(serverInfo.icons, [], 'no url means no absolute icon to advertise')
     })
 })
@@ -773,8 +773,8 @@ describe('mcpApp: the protocol comes from the SDK', () => {
         // the app surface silently lands on /mcp.
         const { h, mcp } = withMcp()
         await h.runHook('loaded')
-        assert.deepEqual(mcp.registered.get('mikser_app_preview').endpoints, ['apps'])
-        assert.deepEqual(mcp.resources.get('ui://mikser/app-shell').metadata.endpoints, ['apps'])
+        assert.deepEqual(mcp.registered.get('mikser_app_preview').endpoints, ['app'])
+        assert.deepEqual(mcp.resources.get('ui://mikser/app-shell').metadata.endpoints, ['app'])
     })
 
     it('agrees with mikser-io-mcp about the extension id', async () => {
@@ -924,11 +924,11 @@ describe('mcpApp: layout sidecars', () => {
         })
         await h.runHook('loaded')
 
-        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
+        const template = mcp.resources.get('mikser://app/{layout}/{+path}')
         const { resources } = await template.template.listCallback()
         assert.deepEqual(resources.map(r => r.uri), [
-            'mikser://apps/order/rows',
-            'mikser://apps/order/nested/deep.json',
+            'mikser://app/order/rows',
+            'mikser://app/order/nested/deep.json',
         ])
         assert.equal(resources[0].name, 'Order rows')
     })
@@ -939,9 +939,9 @@ describe('mcpApp: layout sidecars', () => {
         })
         await h.runHook('loaded')
 
-        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
+        const template = mcp.resources.get('mikser://app/{layout}/{+path}')
         const result = await template.handler(
-            new URL('mikser://apps/order/nested/deep.json'), { layout: 'order', path: 'nested/deep.json' })
+            new URL('mikser://app/order/nested/deep.json'), { layout: 'order', path: 'nested/deep.json' })
         assert.equal(result.contents[0].mimeType, 'application/json')
         assert.deepEqual(JSON.parse(result.contents[0].text), { path: 'nested/deep.json', layout: 'order' })
     })
@@ -951,8 +951,8 @@ describe('mcpApp: layout sidecars', () => {
         // answer made `{ path, mimeType }` lose half of itself.
         const { h, mcp } = withSidecar({ read: async () => ({ path: 'x', mimeType: 'text/csv' }) })
         await h.runHook('loaded')
-        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
-        const result = await template.handler(new URL('mikser://apps/order/x'), { layout: 'order', path: 'x' })
+        const template = mcp.resources.get('mikser://app/{layout}/{+path}')
+        const result = await template.handler(new URL('mikser://app/order/x'), { layout: 'order', path: 'x' })
         assert.equal(result.contents[0].mimeType, 'application/json')
         assert.deepEqual(JSON.parse(result.contents[0].text), { path: 'x', mimeType: 'text/csv' })
     })
@@ -960,30 +960,30 @@ describe('mcpApp: layout sidecars', () => {
     it('lets a sidecar compose the envelope with text and a mime type', async () => {
         const { h, mcp } = withSidecar({ read: async () => ({ text: 'a,b\n1,2', mimeType: 'text/csv' }) })
         await h.runHook('loaded')
-        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
-        const result = await template.handler(new URL('mikser://apps/order/rows.csv'), { layout: 'order', path: 'rows.csv' })
+        const template = mcp.resources.get('mikser://app/{layout}/{+path}')
+        const result = await template.handler(new URL('mikser://app/order/rows.csv'), { layout: 'order', path: 'rows.csv' })
         assert.deepEqual(result.contents[0], {
-            uri: 'mikser://apps/order/rows.csv', mimeType: 'text/csv', text: 'a,b\n1,2',
+            uri: 'mikser://app/order/rows.csv', mimeType: 'text/csv', text: 'a,b\n1,2',
         })
     })
 
     it('accepts a plain string from read, so a sidecar can answer and be done', async () => {
         const { h, mcp } = withSidecar({ read: async () => 'just text' })
         await h.runHook('loaded')
-        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
-        const result = await template.handler(new URL('mikser://apps/order/x'), { layout: 'order', path: 'x' })
-        assert.deepEqual(result.contents[0], { uri: 'mikser://apps/order/x', mimeType: 'text/plain', text: 'just text' })
+        const template = mcp.resources.get('mikser://app/{layout}/{+path}')
+        const result = await template.handler(new URL('mikser://app/order/x'), { layout: 'order', path: 'x' })
+        assert.deepEqual(result.contents[0], { uri: 'mikser://app/order/x', mimeType: 'text/plain', text: 'just text' })
     })
 
     it('says which layout and which export is missing, rather than answering empty', async () => {
         const { h, mcp } = withSidecar({})
         await h.runHook('loaded')
-        const template = mcp.resources.get('mikser://apps/{layout}/{+path}')
+        const template = mcp.resources.get('mikser://app/{layout}/{+path}')
         await assert.rejects(
-            () => template.handler(new URL('mikser://apps/order/x'), { layout: 'order', path: 'x' }),
+            () => template.handler(new URL('mikser://app/order/x'), { layout: 'order', path: 'x' }),
             /order\.js exports no `read`/)
         await assert.rejects(
-            () => template.handler(new URL('mikser://apps/ghost/x'), { layout: 'ghost', path: 'x' }),
+            () => template.handler(new URL('mikser://app/ghost/x'), { layout: 'ghost', path: 'x' }),
             /No mcpApp layout named "ghost"/)
     })
 })
@@ -1012,7 +1012,7 @@ describe('mcpApp: no layouts service present', () => {
     it('loads, mounts and registers the whole surface', async () => {
         const { h, mcp } = withoutLayouts([LAYOUT, ORDER])
         await assert.doesNotReject(() => h.runHook('loaded'))
-        assert.deepEqual(mcp.mounted.map(m => m.name), ['apps'])
+        assert.deepEqual(mcp.mounted.map(m => m.name), ['app'])
         for (const tool of ['mikser_app_preview', 'mikser_app_action']) {
             assert.ok(mcp.registered.has(tool))
         }
@@ -1051,7 +1051,7 @@ describe('mcpApp: no layouts service present', () => {
     it('answers an empty listing rather than throwing', async () => {
         const { h, mcp } = withoutLayouts([LAYOUT])
         await h.runHook('loaded')
-        const { resources } = await mcp.resources.get('mikser://apps/{layout}/{+path}').template.listCallback()
+        const { resources } = await mcp.resources.get('mikser://app/{layout}/{+path}').template.listCallback()
         assert.deepEqual(resources, [])
     })
 })

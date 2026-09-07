@@ -42,7 +42,7 @@
 // the document, the protocol handshake and `sendAction` — so a layout never
 // writes postMessage, and the protocol can change without touching content.
 //
-// This surface gets its OWN ROUTE — `/apps` by default — mounted from
+// This surface gets its OWN ROUTE — `/app` by default — mounted from
 // mikser-io-mcp's substrate rather than added to `/mcp`. Two reasons. An app
 // host connects to a route whose initialize declares the MCP Apps extension
 // and whose tool list is the app surface and nothing else; and the action tool
@@ -100,8 +100,8 @@ export const MODES_URI = 'mikser://mcp-app/modes'
 //
 // The layout is ONE segment, percent-encoded, so a nested layout name
 // (`blog/post`) cannot be mistaken for a longer path.
-export const DATA_URI_TEMPLATE = 'mikser://apps/{layout}/{+path}'
-const dataUri = (layoutName, dataPath) => `mikser://apps/${encodeURIComponent(layoutName)}/${dataPath}`
+export const DATA_URI_TEMPLATE = 'mikser://app/{layout}/{+path}'
+const dataUri = (layoutName, dataPath) => `mikser://app/${encodeURIComponent(layoutName)}/${dataPath}`
 export const PREVIEW_TOOL = 'mikser_app_preview'
 export const ACTION_TOOL = 'mikser_app_action'
 
@@ -136,7 +136,7 @@ function siteIdentity({ runtime, title, icons, name }) {
         // The programmatic identifier a host keys its config on: per site, so
         // two mikser sites in one client are two servers rather than one
         // shadowing the other.
-        name: name ?? `${host ?? folder ?? 'mikser'}-apps`,
+        name: name ?? `${host ?? folder ?? 'mikser'}-app`,
         title: title ?? host ?? folder ?? 'Apps',
         icons: icons ?? own,
         websiteUrl: url ?? undefined,
@@ -149,7 +149,9 @@ export function mcpApp(options = {}) {
     // /<name>, which is what makes `apps` the whole configuration in the
     // common case.
     const {
-        name = 'apps',
+        // Singular, like every other route mikser mounts — /mcp, /live,
+        // /drive, /api. This is one surface, not a directory of them.
+        name = 'app',
         path: routePath = `/${name}`,
         auth, token, allowRemote,
         // What this route exposes. The default is THIS surface and nothing

@@ -48,14 +48,14 @@ Both behind `--server` — there is no route without an HTTP server, and a plugi
 
 ## Its own route
 
-`mcpApp()` mounts at **`/apps`**, separate from `/mcp`, and every tool and resource it registers is scoped to that endpoint. Two reasons:
+`mcpApp()` mounts at **`/app`**, separate from `/mcp`, and every tool and resource it registers is scoped to that endpoint. Two reasons:
 
 - an app host connects to a route whose `initialize` declares the extension and whose tool list is the app surface and nothing else;
 - `mikser_app_action` is **app-callable** (`_meta.ui.visibility: ['app']`) — the spec says a host must keep it out of the model's tool list, so it has no business on the agent's endpoint.
 
 The route carries **this surface and nothing else** — two tools and two resources. A host connects here to run an app and has no use for `mikser_delete_entity`, and every write tool on a second route is another way to reach it. The agent's tools stay on `/mcp`:
 
-| | `/mcp` | `/apps` |
+| | `/mcp` | `/app` |
 |---|---|---|
 | tools | 21 (the whole mikser surface) | 2 — `mikser_app_preview`, `mikser_app_action` |
 | resources | 7 `mikser://…` | 2 — the shell and the modes list |
@@ -65,7 +65,7 @@ Sessions, transport, the auth rule and the protected-resource metadata stay in `
 
 | Option | Default | |
 |---|---|---|
-| `name` | `'apps'` | endpoint name, and what registrations scope themselves to |
+| `name` | `'app'` | endpoint name, and what registrations scope themselves to |
 | `path` | `/<name>` | where it mounts |
 | `auth` | — | a verifier (`mikser-io-auth`'s `oauth()` / `jwt()`, or any `{ verify }`) |
 | `token` | — | static-secret shorthand; keeps mikser's loopback-trust model |
@@ -108,7 +108,7 @@ export async function read({ path, uri, layout, principal, logger }) {
 ```
 
 - **`call`** receives a *declared* action — the `actions` list is checked first, so project code never sees an action the layout didn't offer. Its return value is the tool result the app sees; returning nothing still counts as handled. Throwing reports the failure naming the file, rather than losing the click.
-- **`list`** and **`read`** back the app's `listServerResources()` and `readServerResource()`. The sidecar names a `path`; mikser builds the URI under `mikser://apps/<layout>/<path>`, so a project never constructs mikser's URI space. `read` may answer with a string, a `{ text | blob, mimeType }` envelope, a full `{ contents: [...] }`, or any object (serialised as JSON — a `mimeType` key in a data object stays data).
+- **`list`** and **`read`** back the app's `listServerResources()` and `readServerResource()`. The sidecar names a `path`; mikser builds the URI under `mikser://app/<layout>/<path>`, so a project never constructs mikser's URI space. `read` may answer with a string, a `{ text | blob, mimeType }` envelope, a full `{ contents: [...] }`, or any object (serialised as JSON — a `mimeType` key in a data object stays data).
 - **`principal`** is who called, when the route is gated; on a public route it's `anonymous` — a name, not a person, which is why a sidecar validates rather than trusts.
 
 Sidecars load through the **`layouts` service**, not an import — this package declares no dependency on `mikser-io-layouts` and contains no reference to it beyond the service name. What it needs is the contract: something providing `layouts` with a `sidecar(layout)` method, which `mikser-io-layouts` ≥ 11.2.0 does. Going through the service rather than copying the loader is what makes an edited handler take effect under `--watch`, by the same digest rule the render uses.
@@ -152,7 +152,7 @@ This feature lived in `mikser-io-mcp` under the mcp-ui vocabulary. Renamed on th
 | `mikser_ui_action` | `mikser_app_action` |
 | `ui://mikser/preview-ui-shell` | `ui://mikser/app-shell` |
 | `mikser://mcp-ui/modes` | `mikser://mcp-app/modes` |
-| served on `/mcp` | served on `/apps` |
+| served on `/mcp` | served on `/app` |
 
 ## Decisions
 
