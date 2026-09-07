@@ -643,6 +643,14 @@ describe('mcpApp: its own route', () => {
         await h.runHook('loaded')
 
         assert.deepEqual(mcp.mounted.map(m => [m.name, m.path]), [['apps', '/apps']])
+        // The route carries THIS surface and nothing else. Mounted without
+        // filters it would serve every shared tool as well — 21 of them on
+        // gpointpremium, mikser_delete_entity included — on a route whose
+        // whole purpose is running an app.
+        const [mount] = mcp.mounted
+        assert.deepEqual(mount.tools, ['mikser_app_preview', 'mikser_app_action'])
+        assert.deepEqual(mount.resources, ['ui://mikser/app-shell', 'mikser://mcp-app/modes'])
+        assert.deepEqual(mount.prompts, [], 'an empty list excludes; null would allow everything')
 
         for (const tool of ['mikser_app_preview', 'mikser_app_action']) {
             assert.deepEqual(mcp.registered.get(tool).endpoints, ['apps'],

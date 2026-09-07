@@ -55,6 +55,14 @@ Both behind `--server` — there is no route without an HTTP server, and a plugi
 - an app host connects to a route whose `initialize` declares the extension and whose tool list is the app surface and nothing else;
 - `mikser_app_action` is **app-callable** (`_meta.ui.visibility: ['app']`) — the spec says a host must keep it out of the model's tool list, so it has no business on the agent's endpoint.
 
+The route carries **this surface and nothing else** — two tools and two resources. A host connects here to run an app and has no use for `mikser_delete_entity`, and every write tool on a second route is another way to reach it. The agent's tools stay on `/mcp`:
+
+| | `/mcp` | `/apps` |
+|---|---|---|
+| tools | 21 (the whole mikser surface) | 2 — `mikser_app_preview`, `mikser_app_action` |
+| resources | 7 `mikser://…` | 2 — the shell and the modes list |
+| extension declared | no | yes |
+
 Sessions, transport, the auth rule and the protected-resource metadata stay in `mikser-io-mcp`; this package asks for a route rather than hand-rolling one.
 
 | Option | Default | |
@@ -65,6 +73,9 @@ Sessions, transport, the auth rule and the protected-resource metadata stay in `
 | `token` | — | static-secret shorthand; keeps mikser's loopback-trust model |
 | `allowRemote` | `false` | serve to non-loopback callers with no credential |
 | `renderTimeout` | `30000` | ms for one app render |
+| `tools` | the two app tools | what of the tool surface this route exposes; `[]` exposes none, `null` exposes everything |
+| `resources` | the shell and the modes list | same, for resources |
+| `prompts` | `[]` | same, for prompts |
 
 ## The surface
 

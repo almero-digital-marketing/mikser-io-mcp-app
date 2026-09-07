@@ -126,7 +126,21 @@ export function mcpApp(options = {}) {
     // themselves to, so the two cannot drift apart. `path` defaults to
     // /<name>, which is what makes `apps` the whole configuration in the
     // common case.
-    const { name = 'apps', path: routePath = `/${name}`, auth, token, allowRemote } = options
+    const {
+        name = 'apps',
+        path: routePath = `/${name}`,
+        auth, token, allowRemote,
+        // What this route exposes. The default is THIS surface and nothing
+        // else: a host connects here to run an app, and has no use for
+        // mikser_delete_entity — while every write tool on a second route is
+        // a second way to reach it. The agent's endpoint stays /mcp.
+        //
+        // `[]` excludes rather than allows: matchesAny() treats an empty list
+        // as "nothing matches" and only `null` as "everything".
+        tools     = [PREVIEW_TOOL, ACTION_TOOL],
+        resources = [APP_SHELL_URI, MODES_URI],
+        prompts   = [],
+    } = options
 
     return (core) => {
         const { runtime, onLoaded, useLogger, findEntity, findEntities } = core
@@ -415,7 +429,10 @@ export function mcpApp(options = {}) {
                 logger.error('mcpApp: mikser-io-mcp is too old — needs >= 11.2.0 for endpoint scoping and mountEndpoint. Not mounting %s.', routePath)
                 return
             }
-            const mounted = mcp.mountEndpoint({ name, path: routePath, auth, token, allowRemote })
+            const mounted = mcp.mountEndpoint({
+                name, path: routePath, auth, token, allowRemote,
+                tools, resources, prompts,
+            })
             logger.info('MCP Apps mounted: %s%s (%s, %s)',
                 runtime.options.url ?? `http://localhost:${runtime.options.port ?? 3000}`,
                 mounted.path, PREVIEW_TOOL, ACTION_TOOL)
