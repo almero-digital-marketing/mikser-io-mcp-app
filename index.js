@@ -462,7 +462,16 @@ export function mcpApp(options = {}) {
                             layout: matched,
                             meta: { ...(entity.meta || {}), layout: matched.name },
                         }
-                        const { output } = await previewRender(renderEntity, { save: false, catalog: false })
+                        // `save: false` only — NOT `catalog: false`. That flag
+                        // prunes the catalog row after the render, which is
+                        // right for an entity the caller synthesised and
+                        // catastrophic here: the entity being rendered came
+                        // out of the catalog, so every preview deleted the
+                        // very thing it rendered. The symptom was a form that
+                        // worked once and then answered "Entity not found",
+                        // with the file still on disk, no change set, and the
+                        // removal logged only at debug.
+                        const { output } = await previewRender(renderEntity, { save: false })
                         const result = output?.result
                         if (result == null) {
                             return fail(`Render produced no output for ${entityId} via ${matched.id}. Check that the layout's template engine has a matching renderer plugin loaded.`)
