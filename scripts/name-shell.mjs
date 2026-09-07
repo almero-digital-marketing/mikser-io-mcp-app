@@ -10,4 +10,7 @@ if (!existsSync('public/index.html')) {
 }
 if (existsSync('public/app-shell.html')) rmSync('public/app-shell.html')
 renameSync('public/index.html', 'public/app-shell.html')
-console.log('build: public/app-shell.html')
+// stderr, not stdout: this runs from `prepack`, and `npm pack --json` puts
+// machine-readable output on stdout — a progress line there lands inside the
+// JSON and makes the tooling that reads it unable to answer.
+console.error('build: public/app-shell.html')

@@ -12,7 +12,7 @@
     "assets"
   ],
   "scripts": {
-    "build": "vite build && node scripts/name-shell.mjs",
+    "build": "vite build --logLevel silent && node scripts/name-shell.mjs",
     "prepack": "npm run build",
     "test": "npm run test:unit",
     "test:unit": "node --test --test-reporter=spec 'test/unit/**/*.test.js'"
