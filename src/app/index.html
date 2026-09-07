@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mikser app shell</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    /* Host-provided when the host sends styles; these are the fallbacks for a
+       host that sends none. */
+    color: var(--color-text-primary, #1f2937);
+    background: var(--color-background-primary, transparent);
+    padding: var(--mikser-safe-top, 0) var(--mikser-safe-right, 0) var(--mikser-safe-bottom, 0) var(--mikser-safe-left, 0);
+  }
+  #mikser-app-root { padding: 0; }
+  #mikser-app-fault {
+    display: none;
+    margin: 0;
+    padding: 0.75em 1em;
+    border-left: 3px solid var(--color-text-danger, #b91c1c);
+    background: var(--color-background-secondary, #f9fafb);
+    font: 13px/1.5 system-ui, sans-serif;
+    color: var(--color-text-primary, #374151);
+  }
+  #mikser-app-fault.shown { display: block; }
+</style>
+</head>
+<body>
+  <div id="mikser-app-root"></div>
+  <p id="mikser-app-fault"></p>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

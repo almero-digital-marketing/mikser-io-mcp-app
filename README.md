@@ -92,6 +92,18 @@ Sessions, transport, the auth rule and the protected-resource metadata stay in `
 
 The allow-list is the auth boundary; there is no callId, signed URL or token on this channel, because the iframe's only route here is the host's already-authenticated MCP transport. A handler that fails does not lose the click — the relay payload comes back with `handlerError` set, so the agent knows which of the two happened. `handler.secret` adds an HMAC (`x-mikser-signature: sha256=…`) the receiver must verify.
 
+## The shell is built, not hand-written
+
+The protocol inside the iframe is the official SDK — [`@modelcontextprotocol/ext-apps`](https://github.com/modelcontextprotocol/ext-apps) — bundled into one self-contained document by `vite` + `vite-plugin-singlefile`, which is what the SDK's own `add-app-to-server` skill prescribes. The iframe has no network (the spec's CSP is `default-src 'none'`), so a build that emitted separate assets would produce a page whose scripts can never load.
+
+```bash
+npm run build      # src/app/{index.html,main.js} -> public/app-shell.html
+```
+
+The built file is committed and published, and `prepack` rebuilds it, so installing needs no build and a stale artefact cannot ship. What lives in `src/app/main.js` is only the part that is mikser's: take the rendered layout out of `structuredContent`, put it in the page, and give the layout `sendAction`. Handlers are registered before `connect()`, per the SDK's guidance — a result arriving during the handshake is otherwise dropped and the app renders empty.
+
+Because the runtime is the SDK's, layouts also get its behaviour for free: host theme and fonts (`applyDocumentTheme`, `applyHostStyleVariables`), safe-area insets, iframe size notifications, and `_meta["ui/resourceUri"]` emitted alongside the modern key so hosts on the older spelling still resolve the app.
+
 ## If nothing renders
 
 A conformant host renders an app only for a server that declared the extension at `initialize`:
@@ -100,7 +112,9 @@ A conformant host renders an app only for a server that declared the extension a
 "capabilities": { "extensions": { "io.modelcontextprotocol/ui": { "mimeTypes": ["text/html;profile=mcp-app"] } } }
 ```
 
-`mikser-io-mcp` (≥ 11.1.0) derives that from the `ui://` resources actually bound on the route, so registering here switches it on. If a host still shows text, it does not implement the extension — that is the correct fallback, and `content[0].text` carries the rendered HTML so the user sees something either way. The shell also prints every protocol event in an in-iframe panel, which is how you tell "host has no AppBridge" from "layout threw".
+`mikser-io-mcp` derives that from the `ui://` resources actually bound on the route, so registering here switches it on — under the SDK's own `EXTENSION_ID`, pinned by a test so the two cannot drift. If a host still shows text, it does not implement the extension: that is the correct fallback, and `content[0].text` carries the rendered HTML so the user sees something either way.
+
+When something does break, the shell shows one line — a failed handshake, a call that threw — and nothing on the happy path. These routes serve a site's visitors, so a protocol log under a customer's form is a leak, not a diagnostic; the detail goes to the host through the SDK's `sendLog`.
 
 ## Migrating from `mcpUi`
 

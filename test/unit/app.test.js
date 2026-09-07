@@ -1,10 +1,12 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import nodePath from 'node:path'
 
 import { mcpApp } from '../../index.js'
+import { createMcpSubstrate } from 'mikser-io-mcp'
+import { EXTENSION_ID, RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server'
 import { createHarness } from 'mikser-io/testing/harness.js'
 import { provideService, resetServices } from 'mikser-io'
 
@@ -790,5 +792,79 @@ describe('mcpApp: the route carries the site\'s identity, not mikser\'s', () => 
         assert.equal(serverInfo.title, 'premium')
         assert.equal(serverInfo.name, 'premium-apps')
         assert.deepEqual(serverInfo.icons, [], 'no url means no absolute icon to advertise')
+    })
+})
+
+// What the SDK owns, pinned. These are the places where a hand-written copy of
+// the spec drifted from the spec before: the mime type, the tool→app link, and
+// the extension id in the handshake.
+describe('mcpApp: the protocol comes from the SDK', () => {
+    it('declares the shell with the SDK\'s reserved mime type', async () => {
+        const { h, mcp } = withMcp()
+        await h.runHook('loaded')
+        const shell = mcp.resources.get('ui://mikser/app-shell')
+        assert.equal(shell.metadata.mimeType, RESOURCE_MIME_TYPE)
+        assert.equal(RESOURCE_MIME_TYPE, 'text/html;profile=mcp-app',
+            'if the SDK ever changes this, the shell moves with it — no copy to update')
+    })
+
+    it('links the tool to the app the way the SDK spells it', async () => {
+        const { h, mcp } = withMcp()
+        await h.runHook('loaded')
+        assert.equal(mcp.registered.get('mikser_app_preview')._meta?.ui?.resourceUri,
+            'ui://mikser/app-shell')
+    })
+
+    it('keeps mikser\'s endpoint scoping through the SDK helpers', async () => {
+        // registerAppTool / registerAppResource rebuild the config they pass
+        // on. `endpoints` is mikser's routing key and has to survive that, or
+        // the app surface silently lands on /mcp.
+        const { h, mcp } = withMcp()
+        await h.runHook('loaded')
+        assert.deepEqual(mcp.registered.get('mikser_app_preview').endpoints, ['apps'])
+        assert.deepEqual(mcp.resources.get('ui://mikser/app-shell').metadata.endpoints, ['apps'])
+    })
+
+    it('agrees with mikser-io-mcp about the extension id', async () => {
+        // mikser-io-mcp declares the extension from the ui:// resources bound
+        // on a route, and it spells the id as a literal. This is the test that
+        // turns drift between that literal and the SDK into a failure.
+        const substrate = createMcpSubstrate()
+        substrate.registerResource('shell', 'ui://drift/probe',
+            { mimeType: RESOURCE_MIME_TYPE, endpoints: ['drift'] },
+            async (uri) => ({ contents: [{ uri: uri.href, text: '<!DOCTYPE html>' }] }))
+        substrate.registerTool('mikser_drift_probe',
+            { description: 'p', inputSchema: {}, endpoints: ['drift'],
+              _meta: { ui: { resourceUri: 'ui://drift/probe' } } },
+            async () => ({ content: [] }))
+        const declared = substrate.createServer({ endpoint: 'drift' })
+            .server.getCapabilities().extensions ?? {}
+        assert.deepEqual(declared[EXTENSION_ID], { mimeTypes: [RESOURCE_MIME_TYPE] },
+            `mikser-io-mcp must declare the extension under the SDK's id (${EXTENSION_ID})`)
+    })
+})
+
+// The shell is a build artefact now. These assert the properties the iframe
+// depends on, which a broken build would silently lose.
+describe('the built app shell', () => {
+    const shell = readFileSync(nodePath.join(import.meta.dirname, '..', '..', 'public', 'app-shell.html'), 'utf8')
+
+    it('is one self-contained document, because the iframe has no network', () => {
+        assert.match(shell, /^<!DOCTYPE html>/i)
+        assert.doesNotMatch(shell, /<script[^>]+src=/, 'a second file would never load under default-src none')
+        assert.doesNotMatch(shell, /<link[^>]+rel=["']?stylesheet/, 'same for stylesheets')
+    })
+
+    it('carries the SDK runtime rather than a hand-rolled protocol', () => {
+        assert.match(shell, /ui\/notifications\/tool-result/, 'the SDK\'s protocol is in the bundle')
+        assert.match(shell, /sendAction/, 'and the one API a layout uses is exposed')
+        assert.doesNotMatch(shell, /window\.parent\.postMessage\(\{\s*jsonrpc/,
+            'no second implementation of the transport')
+    })
+
+    it('shows no protocol log on the happy path', () => {
+        // These routes serve a site's visitors. The previous shell revealed a
+        // protocol panel on every render.
+        assert.doesNotMatch(shell, /mikser-debug/, 'the debug panel is gone')
     })
 })

@@ -48,15 +48,29 @@ import { fileURLToPath } from 'node:url'
 import { createHmac, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { useRenderer, matchEntity, useService } from 'mikser-io'
+// The protocol's own vocabulary and registration helpers, from the SDK rather
+// than from our reading of the spec. The negotiation bug that made every host
+// show text instead of an app was exactly such a reading error.
+import {
+    registerAppTool, registerAppResource,
+    EXTENSION_ID, RESOURCE_MIME_TYPE,
+} from '@modelcontextprotocol/ext-apps/server'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// The app shell, read once at import. Resolved relative to this module so it
-// works installed, linked, or as a file: dep.
+// The app shell, read once at import. Built by `npm run build` (vite +
+// vite-plugin-singlefile) into ONE self-contained document, because the iframe
+// has no network of its own — the spec's CSP is `default-src 'none'`, so a
+// second file would be a script that can never load. Committed and published,
+// so installing this package needs no build.
 const APP_SHELL_HTML = readFileSync(path.join(__dirname, 'public', 'app-shell.html'), 'utf8')
 
 export const APP_SHELL_URI = 'ui://mikser/app-shell'
-export const APP_SHELL_MIME = 'text/html;profile=mcp-app'
+// The SDK's constant, not a copy of it: `text/html;profile=mcp-app` is
+// reserved for this and a conformant host ignores a ui:// resource that says
+// anything else.
+export const APP_SHELL_MIME = RESOURCE_MIME_TYPE
+export { EXTENSION_ID }
 export const MODES_URI = 'mikser://mcp-app/modes'
 export const PREVIEW_TOOL = 'mikser_app_preview'
 export const ACTION_TOOL = 'mikser_app_action'
@@ -275,21 +289,29 @@ export function mcpApp(options = {}) {
             // The MIME type is not decorative: SEP-1865 reserves
             // `text/html;profile=mcp-app` for this, and a conformant host
             // ignores a ui:// resource that says anything else.
-            mcp.registerResource(
+            // registerAppResource, not registerResource: the SDK defaults and
+            // normalises what a ui:// resource must declare, so the shape
+            // tracks the spec rather than our copy of it.
+            registerAppResource(
+                mcp,
                 'mikser-app-shell',
                 APP_SHELL_URI,
                 {
                     ...scope,
                     title: 'MCP Apps shell for mikser layouts',
-                    description: 'The static iframe document mikser layouts render into. Owns the protocol — ui/initialize, tool-result injection, the tools/call relay — so a layout is content-only HTML.',
-                    mimeType: APP_SHELL_MIME,
+                    description: 'The document mikser layouts render into. The MCP Apps protocol inside it is the official SDK, bundled — so a layout is content-only HTML.',
                 },
                 async (uri) => ({
                     contents: [{ uri: uri.href, mimeType: APP_SHELL_MIME, text: APP_SHELL_HTML }],
                 }),
             )
 
-            mcp.registerTool(
+            // registerAppTool for the same reason: the tool→app link is
+            // `_meta.ui.resourceUri` today and the helper is what keeps up if
+            // the spec moves the key (it already carries a deprecated
+            // alternative for the older spelling).
+            registerAppTool(
+                mcp,
                 PREVIEW_TOOL,
                 {
                     ...scope,
